@@ -1,0 +1,52 @@
+{
+  "manifest_version": 3,
+  "icons": {
+    "16": "icon16.png",
+    "48": "icon48.png"
+  },
+  "name": "VIT Credential Manager",
+  "version": "2.0.1",
+  "description": "Dashboard-style credential manager for VTOP Student, VTOP FFCS, and LMS.",
+  "permissions": ["storage", "tabs", "scripting", "activeTab", "sidePanel"],
+  "host_permissions": [
+    "https://vtopcc.vit.ac.in/*",
+    "https://vconnectcc1.vit.ac.in/*",
+    "https://vtopregcc.vit.ac.in/*",
+    "https://lms.vit.ac.in/*"
+  ],
+  "action": {
+    "default_title": "VIT Credential Manager"
+  },
+  "side_panel": {
+    "default_path": "popup.html"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://vtopcc.vit.ac.in/*",
+        "https://vconnectcc1.vit.ac.in/*",
+        "https://vtopregcc.vit.ac.in/*",
+        "https://lms.vit.ac.in/*"
+      ],
+      "js": [
+        "crypto.js",
+        "bitmaps.js",
+        "captchaparser.js",
+        "content.js",
+        "timetable.js",
+        "marks.js",
+        "attendance.js",
+        "exam_schedule.js",
+        "navbar.js",
+        "navbarcc.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ]
+}

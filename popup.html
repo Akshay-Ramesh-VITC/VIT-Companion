@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>VIT Credential Manager</title>
+    <link rel="stylesheet" href="style.css" />
+    <script src="crypto.js"></script>
+    <script src="popup.js" defer></script>
+  </head>
+  <body>
+    <main class="popup-shell">
+      <header class="popup-header">
+        <div class="header-copy">
+          <h1>Credential Manager</h1>
+          <p id="activeSiteHint" class="muted">Active site: Not detected</p>
+        </div>
+      </header>
+      <section class="portal-launcher" aria-label="Portal shortcuts">
+
+  <button id="vtopLaunch" class="portal-box">
+      <div class="portal-icon">🎓</div>
+      <div class="portal-name">VTOP</div>
+  </button>
+
+  <button id="ffcsLaunch" class="portal-box">
+      <div class="portal-icon">📝</div>
+      <div class="portal-name">Registrar</div>
+  </button>
+
+  <button id="codetLaunch" class="portal-box">
+      <div class="portal-icon">📃</div>
+      <div class="portal-name">CodeTantra</div>
+  </button>
+
+  <button id="lmsLaunch" class="portal-box">
+      <div class="portal-icon">📚</div>
+      <div class="portal-name">LMS</div>
+  </button>
+
+</section>
+      <section class="quick-actions" aria-label="Quick actions">
+        <button type="button" class="quick-btn" data-quick-action="marks-view">Enhance Marks Page</button>
+        <button type="button" class="quick-btn" data-quick-action="attendance-view">Enhance Attendance Page</button>
+        <div style="display:flex;gap:6px;align-items:center;">
+          <select id="copyExamSelect" style="flex:1;padding:5px;border-radius:6px;border:1px solid #ccc">
+            <option value="">Select exam section</option>
+            <option value="ALL">Copy All Sections</option>
+          </select>
+          <select id="copyFormatSelect" title="Format" style="padding:6px;border-radius:6px;border:1px solid #ccc">
+            <option value="MARKDOWN">Markdown</option>
+            <option value="WHATSAPP">WhatsApp Text</option>
+          </select>
+        </div>
+        <div style="display:flex;gap:6px;align-items:center;">
+          <button type="button" id="refreshExamBtn" class="quick-btn" style="padding:6px;">Refresh</button>
+          <button type="button" id="copySelectedExamBtn" class="quick-btn" style="padding:6px;">Copy</button>
+        </div>
+        <p id="quickActionStatus" class="quick-status">Open a VTOP tab, then run an action.</p>
+      </section>
+
+      <section class="site-card" data-site-key="vtop" aria-label="VTOP Student card">
+        <div class="card-top">
+          <div class="card-icon">⌂</div>
+          <div class="site-meta">
+            <h2>VTOP Student</h2>
+            <a class="site-domain" href="https://vtopcc.vit.ac.in" target="_blank" rel="noopener noreferrer">vtopcc.vit.ac.in</a>
+          </div>
+          <div class="card-chip" data-badge>Secure</div>
+        </div>
+        <div class="divider"></div>
+        <div class="field-grid">
+          <label>
+            Username
+            <input type="text" data-field="username" autocomplete="username" />
+          </label>
+          <label>
+            Password
+            <input type="password" data-field="password" autocomplete="current-password" />
+          </label>
+        </div>
+        <div class="toggle-grid">
+          <label class="toggle-item">
+            <span>Fill Form</span>
+            <input type="checkbox" data-toggle="fillForm" />
+            <span class="slider"></span>
+          </label>
+          <label class="toggle-item">
+            <span>Fill Captcha</span>
+            <input type="checkbox" data-toggle="fillCaptcha" />
+            <span class="slider"></span>
+          </label>
+          <label class="toggle-item">
+            <span>Auto Submit</span>
+            <input type="checkbox" data-toggle="autoSubmit" />
+            <span class="slider"></span>
+          </label>
+        </div>
+        <div class="card-actions">
+          <button type="button" class="save-btn" data-action="save">Save</button>
+          <span class="status-text" data-status>Stored locally</span>
+        </div>
+      </section>
+
+      <section class="site-card" data-site-key="ffcs" aria-label="VTOP FFCS card">
+        <div class="card-top">
+          <div class="card-icon">≡</div>
+          <div class="site-meta">
+            <h2>VTOP FFCS</h2>
+            <a class="site-domain" href="https://vtopregcc.vit.ac.in" target="_blank" rel="noopener noreferrer">vtopregcc.vit.ac.in</a>
+          </div>
+          <div class="card-chip" data-badge>Secure</div>
+        </div>
+        <div class="divider"></div>
+        <div class="field-grid">
+          <label>
+            Username
+            <input type="text" data-field="username" autocomplete="username" />
+          </label>
+          <label>
+            Password
+            <input type="password" data-field="password" autocomplete="current-password" />
+          </label>
+        </div>
+        <div class="toggle-grid">
+          <label class="toggle-item">
+            <span>Fill Form</span>
+            <input type="checkbox" data-toggle="fillForm" />
+            <span class="slider"></span>
+          </label>
+          <label class="toggle-item">
+            <span>Fill Captcha</span>
+            <input type="checkbox" data-toggle="fillCaptcha" />
+            <span class="slider"></span>
+          </label>
+          <label class="toggle-item">
+            <span>Auto Submit</span>
+            <input type="checkbox" data-toggle="autoSubmit" />
+            <span class="slider"></span>
+          </label>
+        </div>
+        <div class="card-actions">
+          <button type="button" class="save-btn" data-action="save">Save</button>
+          <span class="status-text" data-status>Stored locally</span>
+        </div>
+      </section>
+
+      <section class="site-card" data-site-key="codet" aria-label="CodeTantra card">
+        <div class="card-top">
+          <div class="card-icon">∑</div>
+          <div class="site-meta">
+            <h2>CodeTantra</h2>
+            <a class="site-domain" href="https://auth.codetantra.com/a/?34dpcvse71dqs0yo9qg" target="_blank" rel="noopener noreferrer">vconnectcc1.vit.ac.in</a>
+          </div>
+          <div class="card-chip" data-badge>Secure</div>
+        </div>
+        <div class="divider"></div>
+        <div class="field-grid">
+          <label>
+            Username
+            <input type="text" data-field="username" autocomplete="username" />
+          </label>
+          <label>
+            Password
+            <input type="password" data-field="password" autocomplete="current-password" />
+          </label>
+        </div>
+        <div class="toggle-grid">
+          <label class="toggle-item">
+            <span>Fill Form</span>
+            <input type="checkbox" data-toggle="fillForm" />
+            <span class="slider"></span>
+          </label>
+          <label class="toggle-item">
+            <span>Fill Captcha</span>
+            <input type="checkbox" data-toggle="fillCaptcha" />
+            <span class="slider"></span>
+          </label>
+          <label class="toggle-item">
+            <span>Auto Submit</span>
+            <input type="checkbox" data-toggle="autoSubmit" />
+            <span class="slider"></span>
+          </label>
+        </div>
+        <div class="card-actions">
+          <button type="button" class="save-btn" data-action="save">Save</button>
+          <span class="status-text" data-status>Stored locally</span>
+        </div>
+      </section>
+
+      
+      <section class="site-card" data-site-key="lms" aria-label="LMS card">
+        <div class="card-top">
+          <div class="card-icon">▣</div>
+          <div class="site-meta">
+            <h2>LMS</h2>
+            <a class="site-domain" href="https://lms.vit.ac.in" target="_blank" rel="noopener noreferrer">lms.vit.ac.in</a>
+          </div>
+          <div class="card-chip" data-badge>Secure</div>
+        </div>
+        <div class="divider"></div>
+        <div class="field-grid">
+          <label>
+            Username
+            <input type="text" data-field="username" autocomplete="username" />
+          </label>
+          <label>
+            Password
+            <input type="password" data-field="password" autocomplete="current-password" />
+          </label>
+        </div>
+        <div class="toggle-grid">
+          <label class="toggle-item">
+            <span>Fill Form</span>
+            <input type="checkbox" data-toggle="fillForm" />
+            <span class="slider"></span>
+          </label>
+          <label class="toggle-item">
+            <span>Fill Captcha</span>
+            <input type="checkbox" data-toggle="fillCaptcha" />
+            <span class="slider"></span>
+          </label>
+          <label class="toggle-item">
+            <span>Auto Submit</span>
+            <input type="checkbox" data-toggle="autoSubmit" />
+            <span class="slider"></span>
+          </label>
+        </div>
+        <div class="card-actions">
+          <button type="button" class="save-btn" data-action="save">Save</button>
+          <span class="status-text" data-status>Stored locally</span>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>
