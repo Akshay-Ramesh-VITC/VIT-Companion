@@ -17,6 +17,9 @@
     if (hostname.includes("lms.vit.ac.in")) {
       return "lms";
     }
+    if (hostname.includes("vitolcc.vit.ac.in")) {
+      return "vitol";
+    }
     return null;
   }
 

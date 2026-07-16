@@ -14,6 +14,10 @@ const SITE_CONFIG = {
   lms: {
     title: "LMS",
     domain: "lms.vit.ac.in"
+  },
+  vitol: {
+    title: "VITOL",
+    domain: "vitolcc.vit.ac.in"
   }
 };
 
@@ -125,6 +129,15 @@ url:"https://lms.vit.ac.in"
 
 });
 
+document.getElementById("vitolLaunch")
+.addEventListener("click",()=>{
+
+chrome.tabs.create({
+url:"https://vitolcc.vit.ac.in/login/index.php"
+});
+
+});
+
 document.getElementById("codetLaunch")
 .addEventListener("click",()=>{
 
@@ -150,7 +163,8 @@ function getDefaultData() {
     vtop: getDefaultSiteState(),
     codet: getDefaultSiteState(),
     ffcs: getDefaultSiteState(),
-    lms: getDefaultSiteState()
+    lms: getDefaultSiteState(),
+    vitol: getDefaultSiteState()
   };
 }
 
@@ -172,6 +186,9 @@ function detectSiteKeyFromUrl(url) {
     }
     if (hostname.includes("lms.vit.ac.in")) {
       return "lms";
+    }
+    if (hostname.includes("vitolcc.vit.ac.in")) {
+      return "vitol";
     }
   } catch (error) {
     return null;
