@@ -3,7 +3,7 @@ async function configurePanelBehavior() {
 
   if (isOpera) {
     try {
-      await chrome.action.setPopup({ popup: "popup.html" });
+      await chrome.action.setPopup({ popup: "popup.html?view=popup" });
     } catch (_e) {
       // Ignore if action API is unavailable
     }
@@ -18,7 +18,7 @@ async function configurePanelBehavior() {
     } catch (_e) {
       // Fallback to popup if side panel behavior fails or is unsupported
       if (chrome.action?.setPopup) {
-        await chrome.action.setPopup({ popup: "popup.html" }).catch(() => {});
+        await chrome.action.setPopup({ popup: "popup.html?view=popup" }).catch(() => {});
       }
     }
   }

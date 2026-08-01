@@ -1,3 +1,12 @@
+(function detectOperaPopup() {
+  if (
+    (typeof navigator !== "undefined" && /OPR\/|Opera/i.test(navigator.userAgent)) ||
+    window.location.search.includes("view=popup")
+  ) {
+    document.documentElement.classList.add("opera-popup");
+  }
+})();
+
 const SITE_CONFIG = {
   vtop: {
     title: "VTOP Student",

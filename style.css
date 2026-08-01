@@ -28,6 +28,17 @@ body {
   min-height: 100vh;
 }
 
+/* Opera popup ONLY styles - does not affect Chrome/Brave side panel */
+html.opera-popup,
+html.opera-popup body {
+  width: 380px;
+}
+
+html.opera-popup .portal-launcher {
+  gap: 6px;
+  margin: 14px 0;
+}
+
 .popup-shell {
   display: flex;
   flex-direction: column;
@@ -45,10 +56,10 @@ body {
   gap: 8px;
 }
 
-.portal-launcher{
- display:flex;
- gap:12px;
- margin:18px 0;
+.portal-launcher {
+  display: flex;
+  gap: 12px;
+  margin: 18px 0;
 }
 
 .portal-box{
