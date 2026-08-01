@@ -317,7 +317,7 @@
     try {
       const endTime = slot.charAt(0) === "L" ? addTime(time, 100) : addTime(time, 50);
       const res = await fetch(
-        "https://www.googleapis.com/calendar/v3/calendars/primary/events?sendUpdates=all&sendNotifications=true&alt=json&key=",
+        "https://www.googleapis.com/calendar/v3/calendars/primary/events?sendUpdates=all&sendNotifications=true&alt=json&key=AIzaSyCPBz-DTZdoTLQ_ZiqsVUO520XItcomTn0",
         {
           method: "POST",
           headers: {

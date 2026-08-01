@@ -16,7 +16,8 @@
     "https://vitolcc.vit.ac.in/*"
   ],
   "action": {
-    "default_title": "VIT Credential Manager"
+    "default_title": "VIT Credential Manager",
+    "default_popup": "popup.html"
   },
   "side_panel": {
     "default_path": "popup.html"

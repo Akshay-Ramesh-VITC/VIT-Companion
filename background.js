@@ -1,13 +1,35 @@
+async function configurePanelBehavior() {
+  const isOpera = typeof navigator !== "undefined" && /OPR\/|Opera/i.test(navigator.userAgent);
+
+  if (isOpera) {
+    try {
+      await chrome.action.setPopup({ popup: "popup.html" });
+    } catch (_e) {
+      // Ignore if action API is unavailable
+    }
+  } else {
+    try {
+      if (chrome.action?.setPopup) {
+        await chrome.action.setPopup({ popup: "" });
+      }
+      if (chrome.sidePanel?.setPanelBehavior) {
+        await chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
+      }
+    } catch (_e) {
+      // Fallback to popup if side panel behavior fails or is unsupported
+      if (chrome.action?.setPopup) {
+        await chrome.action.setPopup({ popup: "popup.html" }).catch(() => {});
+      }
+    }
+  }
+}
+
 chrome.runtime.onInstalled.addListener(() => {
-  chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => {
-    // No-op: ignore environments without side panel support.
-  });
+  configurePanelBehavior();
 });
 
 chrome.runtime.onStartup.addListener(() => {
-  chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => {
-    // No-op: ignore environments without side panel support.
-  });
+  configurePanelBehavior();
 });
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
