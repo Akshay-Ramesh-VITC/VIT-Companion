@@ -18,3 +18,9 @@ VIT Companion is a lightweight browser extension designed to speed up common stu
 ## Why This Project?
 
 Everytime I needed to access the College's website, the login page is the most time taking part. Thus, I made this self-hosted extension to quickly login especially during the time where the network traffic to the site is high.
+
+## Supported Browsers
+
+- Chrome
+- Brave
+- Opera (NEW!)
