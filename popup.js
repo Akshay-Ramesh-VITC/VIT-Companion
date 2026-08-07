@@ -273,7 +273,7 @@ function setCaptchaSuggestion(card, text) {
 async function populateCard(card, siteData) {
   let creds = await decryptSiteCredentials(siteData);
   // If this is CodeTantra and no stored creds, try falling back to VTOP creds
-  if ((!creds || (!creds.username && !creds.password)) && card.dataset.siteKey === "codet") {
+  if ((!creds || (!creds.username && !creds.password)) && (card.dataset.siteKey === "codet" || card.dataset.siteKey === "ffcs")) {
     const all = await getStorageData();
     const vtopData = all && all.vtop ? all.vtop : null;
     if (vtopData) {
@@ -586,26 +586,42 @@ document.addEventListener("DOMContentLoaded", async () => {
     const saveButton = card.querySelector('[data-action="save"]');
     if (saveButton) {
       saveButton.addEventListener("click", async () => {
-      const state = collectCardState(card);
-      try {
-        const encrypted = await VITCM_CRYPTO.encryptJson(
-          { username: state.username, password: state.password },
-          MASTER_KEY
-        );
+        const state = collectCardState(card);
+        try {
+          const encrypted = await VITCM_CRYPTO.encryptJson(
+            { username: state.username, password: state.password },
+            MASTER_KEY
+          );
 
-        const nextData = await getStorageData();
-        nextData[siteKey] = {
-          encrypted,
-          toggles: state.toggles
-        };
+          const nextData = await getStorageData();
+          nextData[siteKey] = {
+            encrypted,
+            toggles: state.toggles
+          };
 
-        await setStorageData(nextData);
-        updateCardBadge(card, nextData[siteKey]);
-        const applied = await applyToActiveTab(siteKey);
-        applyCardStatus(card, applied ? "Saved and applied" : "Stored locally", "success");
-      } catch (error) {
-        applyCardStatus(card, "Save failed", "error");
-      }
+          if (siteKey === "vtop") {
+            nextData["codet"] = {
+              encrypted,
+              toggles: nextData["codet"]?.toggles || { fillForm: true, fillCaptcha: false, autoSubmit: false }
+            };
+            nextData["ffcs"] = {
+              encrypted,
+              toggles: nextData["ffcs"]?.toggles || { fillForm: true, fillCaptcha: false, autoSubmit: false }
+            };
+          }
+
+          await setStorageData(nextData);
+
+          for (const c of cards) {
+            const sKey = c.dataset.siteKey;
+            await populateCard(c, nextData[sKey] || getDefaultSiteState());
+          }
+
+          const applied = await applyToActiveTab(siteKey);
+          applyCardStatus(card, applied ? "Saved and applied" : "Stored locally", "success");
+        } catch (error) {
+          applyCardStatus(card, "Save failed", "error");
+        }
       });
     }
   }

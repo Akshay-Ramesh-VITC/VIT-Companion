@@ -509,15 +509,15 @@
   async function loadSiteData() {
     const result = await chrome.storage.local.get(STORAGE_KEY);
     const allData = result[STORAGE_KEY] || {};
-    // If CodeTantra (codet) has no specific stored creds, fall back to VTOP creds
-    if (siteKey === "codet") {
-      if (allData["codet"] && allData["codet"].encrypted) {
-        return allData["codet"];
+    // If CodeTantra (codet) or FFCS (ffcs) has no specific stored creds, fall back to VTOP creds
+    if (siteKey === "codet" || siteKey === "ffcs") {
+      if (allData[siteKey] && allData[siteKey].encrypted) {
+        return allData[siteKey];
       }
       if (allData["vtop"] && allData["vtop"].encrypted) {
         return allData["vtop"];
       }
-      return allData["codet"] || null;
+      return allData[siteKey] || null;
     }
 
     return allData[siteKey] || null;
