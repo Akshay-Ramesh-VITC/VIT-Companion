@@ -24,3 +24,9 @@ Everytime I needed to access the College's website, the login page is the most t
 - Chrome
 - Brave
 - Opera (NEW!)
+
+## Bug Fixes
+
+There were 2 major bugs identified and rectified:
+- Toggling Auto-submit on led to a infinite reload loop
+- The navbar.js brought out bugs when user tried to submit assignment in LMS
