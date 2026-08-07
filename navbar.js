@@ -1,10 +1,17 @@
-const nav_bar_change = () => {
+(() => {
+  "use strict";
+
+  if (!/vtopcc/i.test(window.location.hostname)) {
+    return;
+  }
+
+  const nav_bar_change = () => {
 	let items_list = Array.from(document.getElementsByTagName("a")).filter(
 		(e) => e.dataset.url
 	);
 	let marks, attendance, course_page, da_upload, time_table, calendar;
 	for (let i = 0; i < items_list.length; i++) {
-		item = items_list[i].innerText.trim();
+		let item = items_list[i].innerText.trim();
 		if (item.includes("Class Attendance")) {
 			attendance = i;
 		} else if (item.includes("Course Page")) {
@@ -19,8 +26,11 @@ const nav_bar_change = () => {
 			marks = i;
 		}
 	}
-	// console.log(marks, attendance, course_page, da_upload, time_table, calendar);
+
 	let nav = document.getElementsByClassName("collapse navbar-collapse");
+	if (!nav || nav.length === 0) {
+		return;
+	}
 	let span = document.createElement("div");
 	span.id = "navbar";
 	span.innerHTML = `
@@ -54,22 +64,15 @@ const nav_bar_change = () => {
 			});
 		});
 	});
-};
+  };
 
-const clear_navbar = () => {
-	document.getElementById("navbar").remove();
-};
+  let flag = false;
 
-function sleep(ms) {
-	return new Promise((resolve) => setTimeout(resolve, ms));
-}
-let flag = false;
-
-chrome.runtime.onMessage.addListener((request) => {
+  chrome.runtime.onMessage.addListener((request) => {
 	if (request.message === "nav_bar_change") {
 		try {
 			if (
-				document.getElementsByClassName("btn-group dropend")[0].style
+				document.getElementsByClassName("btn-group dropend")[0]?.style
 					.backgroundColor === "red"
 			) {
 				document.getElementsByClassName("btn-group dropend")[0].remove();
@@ -86,19 +89,19 @@ chrome.runtime.onMessage.addListener((request) => {
 			console.log(error);
 		}
 	}
-});
-if (
+  });
+
+  if (
 	document.getElementsByClassName("btn-group dropend")[0]?.style
 		.backgroundColor === "red"
-) {
+  ) {
 	document.getElementsByClassName("btn-group dropend")[0].remove();
-}
-if (
+  }
+  if (
 	document.getElementsByClassName("btn btn-primary border-primary shadow-none")
 		.length == 0
-) {
+  ) {
 	window.addEventListener("load", nav_bar_change, false);
 	flag = true;
-}
-
-let input = document.createElement("input");
+  }
+})();

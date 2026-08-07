@@ -28,22 +28,97 @@
     return;
   }
 
+  let hasSubmittedInCurrentLifecycle = false;
+
+  function canAutoSubmitThisSession() {
+    try {
+      const lastSubmitStr = sessionStorage.getItem("vitCmLastAutoSubmitTime");
+      if (!lastSubmitStr) return true;
+      const lastSubmit = parseInt(lastSubmitStr, 10);
+      if (Date.now() - lastSubmit < 5000) {
+        return false;
+      }
+    } catch (_e) {
+      // ignore storage access errors
+    }
+    return true;
+  }
+
+  function recordAutoSubmitSession() {
+    try {
+      sessionStorage.setItem("vitCmLastAutoSubmitTime", String(Date.now()));
+    } catch (_e) {
+      // ignore
+    }
+  }
+
+  function isLoginPageForSite(key) {
+    const path = window.location.pathname.toLowerCase();
+    const search = window.location.search.toLowerCase();
+    const href = window.location.href.toLowerCase();
+
+    if (key === "lms" || key === "vitol") {
+      if (path.includes("/login/") || search.includes("login")) {
+        return true;
+      }
+      return Boolean(
+        document.querySelector('form[action*="login"], #login, form.login-form, form#loginform, input[type="password"]')
+      );
+    }
+
+    if (key === "vtop") {
+      if (path.includes("/vtop/open/page") || path.includes("/vtop/initialprocess") || path.includes("/login")) {
+        return true;
+      }
+      return Boolean(
+        document.querySelector('#captchaBlock, #captchaStr, #submitBtn, form[action*="login"], input[type="password"]')
+      );
+    }
+
+    if (key === "ffcs") {
+      if (href.includes("/registrationnew/") || path.includes("/studentlogin") || path.includes("/login")) {
+        return true;
+      }
+      return Boolean(
+        document.querySelector('#captchaString, #captchaStringProgInfo, #studLogin, input[type="password"]')
+      );
+    }
+
+    if (key === "codet") {
+      if (path.includes("/login") || path.includes("/a/") || path.includes("/signin") || path.includes("/auth")) {
+        return true;
+      }
+      return Boolean(
+        document.querySelector('#username, #password, form[action*="login"], input[type="password"]')
+      );
+    }
+
+    return true;
+  }
+
+  function isTargetableLoginPage() {
+    if (!isLoginPageForSite(siteKey)) {
+      return false;
+    }
+    const hasPassword = Boolean(findPasswordField());
+    const hasCaptcha = Boolean(findCaptchaField() || findCaptchaInput() || findCaptchaImage());
+    return hasPassword || hasCaptcha;
+  }
+
   function findUsernameField() {
-    // fast path: many sites (including CodeTantra vconnect) use id="username"
     const fast = document.getElementById("username") || document.getElementById("userName");
     if (fast) return fast;
 
     const selectors = [
-      "input[name*=user i]",
-      "input[id*=user i]",
-      "input[name*=userid i]",
-      "input[id*=userid i]",
       "input[name*=username i]",
       "input[id*=username i]",
+      "input[name*=userid i]",
+      "input[id*=userid i]",
+      "input[name*=user i]",
+      "input[id*=user i]",
       "input[name*=reg i]",
       "input[id*=reg i]",
       "input[placeholder*=user i]",
-      "input[type=text i]",
       "input[type=email i]",
       "input[id*=login i]",
       "input[name*=login i]"
@@ -227,7 +302,12 @@
       if (onSolved) {
         onSolved(Boolean(text), text);
       }
-      if (autoSubmit) {
+      if (autoSubmit && text && String(text).trim().length >= 3) {
+        if (hasSubmittedInCurrentLifecycle || !canAutoSubmitThisSession()) {
+          return;
+        }
+        hasSubmittedInCurrentLifecycle = true;
+        recordAutoSubmitSession();
         setTimeout(() => {
           const submitBtn = document.querySelector("#submitBtn");
           if (submitBtn) {
@@ -301,7 +381,12 @@
           if (notifySolve && onSolved) {
             onSolved(Boolean(text), text);
           }
-          if (autoSubmit) {
+          if (autoSubmit && text && String(text).trim().length >= 3) {
+            if (hasSubmittedInCurrentLifecycle || !canAutoSubmitThisSession()) {
+              return;
+            }
+            hasSubmittedInCurrentLifecycle = true;
+            recordAutoSubmitSession();
             setTimeout(() => {
               const form = document.querySelector("form");
               if (form) {
@@ -329,9 +414,14 @@
           if (notifySolve && onSolved) {
             onSolved(Boolean(text), text);
           }
-          if (autoSubmit) {
+          if (autoSubmit && text && String(text).trim().length >= 3) {
+            if (hasSubmittedInCurrentLifecycle || !canAutoSubmitThisSession()) {
+              return;
+            }
+            hasSubmittedInCurrentLifecycle = true;
+            recordAutoSubmitSession();
             setTimeout(() => {
-              const form = document.getElementById("studLogin");
+              const form = document.getElementById("studLogin") || document.querySelector("form");
               if (form) {
                 form.submit();
               }
@@ -346,6 +436,9 @@
   }
 
   function tryUrls() {
+    if (!isTargetableLoginPage()) {
+      return;
+    }
     if (!document.body?.dataset?.vitCmFillCaptchaBound) {
       document.body.dataset.vitCmFillCaptchaBound = "1";
       document.addEventListener("fillCaptcha", (e) => {
@@ -393,11 +486,17 @@
   }
 
   function detectFormForSubmission(usernameField, passwordField) {
-    return (
-      usernameField?.closest("form") ||
-      passwordField?.closest("form") ||
-      document.querySelector("form")
-    );
+    if (usernameField && usernameField.closest("form")) {
+      return usernameField.closest("form");
+    }
+    if (passwordField && passwordField.closest("form")) {
+      return passwordField.closest("form");
+    }
+    const pwdInput = document.querySelector('input[type="password"]');
+    if (pwdInput && pwdInput.closest("form")) {
+      return pwdInput.closest("form");
+    }
+    return null;
   }
 
   function highlightCaptchaField(captchaField) {
@@ -425,6 +524,10 @@
   }
 
   async function runAutofill() {
+    if (!isTargetableLoginPage()) {
+      return;
+    }
+
     const siteData = await loadSiteData();
     if (!siteData) {
       return;
@@ -441,10 +544,10 @@
     const captchaField = findCaptchaField();
 
     if (toggles.fillForm) {
-      if (usernameField && creds.username) {
+      if (usernameField && creds.username && usernameField.value !== creds.username) {
         dispatchInput(usernameField, creds.username);
       }
-      if (passwordField && creds.password) {
+      if (passwordField && creds.password && passwordField.value !== creds.password) {
         dispatchInput(passwordField, creds.password);
       }
     }
@@ -462,17 +565,33 @@
     }
 
     if (toggles.autoSubmit) {
+      if (hasSubmittedInCurrentLifecycle || !canAutoSubmitThisSession()) {
+        return;
+      }
+
       if (captchaField) {
         return;
       }
+
       const form = detectFormForSubmission(usernameField, passwordField);
-      if (form) {
-        const submitButton = form.querySelector('button[type="submit"], input[type="submit"]');
-        if (submitButton) {
-          submitButton.click();
-        } else {
-          form.requestSubmit();
-        }
+      if (!form) {
+        return;
+      }
+
+      const userVal = usernameField ? usernameField.value.trim() : "";
+      const passVal = passwordField ? passwordField.value.trim() : "";
+      if (!userVal || !passVal) {
+        return;
+      }
+
+      hasSubmittedInCurrentLifecycle = true;
+      recordAutoSubmitSession();
+
+      const submitButton = form.querySelector('button[type="submit"], input[type="submit"], #submitBtn, #loginBtn');
+      if (submitButton) {
+        submitButton.click();
+      } else {
+        form.requestSubmit();
       }
     }
   }
@@ -511,6 +630,10 @@
   });
 
   async function attemptAutofillWithRetries() {
+    if (!isTargetableLoginPage()) {
+      return;
+    }
+
     const maxAttempts = 12;
     let count = 0;
     let timer = null;
@@ -521,7 +644,7 @@
 
       const hasUser = Boolean(findUsernameField());
       const hasPass = Boolean(findPasswordField());
-      if ((hasUser && hasPass) || count >= maxAttempts) {
+      if ((hasUser && hasPass) || count >= maxAttempts || hasSubmittedInCurrentLifecycle) {
         if (timer) {
           clearInterval(timer);
           timer = null;
@@ -530,7 +653,7 @@
     };
 
     await tick();
-    if (count < maxAttempts) {
+    if (count < maxAttempts && !hasSubmittedInCurrentLifecycle) {
       timer = setInterval(tick, 600);
     }
   }
