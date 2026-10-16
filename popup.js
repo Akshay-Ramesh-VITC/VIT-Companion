@@ -533,6 +533,224 @@ async function requestCaptchaAssist(siteKey) {
   }
 }
 
+const MARKS_STORAGE_KEY = "vit_stored_marks";
+
+function formatMarksTimestamp(ts) {
+  if (!ts) return "Not synced yet";
+  const date = new Date(ts);
+  const now = new Date();
+  const diffSec = Math.floor((now.getTime() - date.getTime()) / 1000);
+  if (diffSec < 60) return "Just now";
+  if (diffSec < 3600) return `${Math.floor(diffSec / 60)}m ago`;
+  if (diffSec < 86400) return `Today at ${date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
+  return `${date.toLocaleDateString([], { month: "short", day: "numeric" })} at ${date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
+}
+
+function escapeHtml(str) {
+  if (!str) return "";
+  return String(str)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
+async function renderStoredMarksDashboard() {
+  const lastUpdatedEl = document.getElementById("marksLastUpdated");
+  const badgeEl = document.getElementById("marksUpdateBadge");
+  const recentBox = document.getElementById("recentMarksUpdatesBox");
+  const recentList = document.getElementById("recentMarksUpdatesList");
+  const coursesCountEl = document.getElementById("storedCoursesCount");
+  const semBadgeEl = document.getElementById("storedMarksSemBadge");
+  const containerEl = document.getElementById("storedMarksContainer");
+  const semSelect = document.getElementById("marksSemesterSelect");
+  const semBar = document.getElementById("marksSemesterBar");
+
+  if (!lastUpdatedEl) return;
+
+  const result = await chrome.storage.local.get(MARKS_STORAGE_KEY);
+  let data = result[MARKS_STORAGE_KEY] || null;
+
+  if (!data && window.VITCM_DB?.loadMarksData) {
+    try {
+      data = await window.VITCM_DB.loadMarksData();
+      if (data) {
+        await chrome.storage.local.set({ [MARKS_STORAGE_KEY]: data });
+      }
+    } catch (_dbLoadErr) {}
+  }
+
+  if (!data || !data.lastChecked) {
+    lastUpdatedEl.textContent = "Not synced yet";
+    if (badgeEl) badgeEl.style.display = "none";
+    if (recentBox) recentBox.style.display = "none";
+    if (coursesCountEl) coursesCountEl.textContent = "0";
+    if (semBadgeEl) semBadgeEl.style.display = "none";
+    if (semBar) semBar.style.display = "none";
+    if (containerEl) {
+      containerEl.innerHTML = '<p class="empty-marks-hint">Login to VTOP to automatically scrape and view your marks here.</p>';
+    }
+    return;
+  }
+
+  lastUpdatedEl.textContent = `Last checked: ${formatMarksTimestamp(data.lastChecked)}`;
+
+  const unreadCount = data.unreadUpdatesCount || 0;
+  if (badgeEl) {
+    if (unreadCount > 0) {
+      badgeEl.textContent = `${unreadCount} New`;
+      badgeEl.style.display = "inline-block";
+    } else {
+      badgeEl.style.display = "none";
+    }
+  }
+
+  const recentUpdates = data.recentUpdates || [];
+  if (recentBox && recentList) {
+    if (recentUpdates.length > 0) {
+      recentBox.style.display = "flex";
+      recentList.innerHTML = recentUpdates.slice(0, 6).map((u) => `
+        <div class="recent-mark-item">
+          <div>
+            <div class="course-name">${escapeHtml(u.courseCode)} ${u.courseTitle ? `- ${escapeHtml(u.courseTitle)}` : ""}${u.semesterName ? ` <span style="font-size:9px;opacity:0.7">(${escapeHtml(u.semesterName)})</span>` : ""}</div>
+            <div class="ass-name">${escapeHtml(u.assessmentTitle)} ${u.oldScored && u.oldScored !== "-" ? `<span style="opacity:0.6">(was ${escapeHtml(u.oldScored)})</span>` : ""}</div>
+          </div>
+          <div>
+            <span class="score-tag">${escapeHtml(u.newScored)} / ${escapeHtml(u.maxMarks)}</span>
+          </div>
+        </div>
+      `).join("");
+    } else {
+      recentBox.style.display = "none";
+    }
+  }
+
+  // --- Semester resolution ---
+  const semesters = data.semesters || {};
+  if (Object.keys(semesters).length === 0 && data.courses && Object.keys(data.courses).length > 0) {
+    const fallbackId = data.currentSemesterId || "current_semester";
+    semesters[fallbackId] = {
+      id: fallbackId,
+      name: data.currentSemesterName || "Current Semester",
+      courses: data.courses
+    };
+  }
+
+  // Filter to semesters that have courses/marks (requirement 1)
+  const nonZeroSemesters = Object.values(semesters).filter(
+    (s) => s && s.courses && Object.keys(s.courses).length > 0
+  );
+
+  // Sort semesters chronologically so latest is first
+  nonZeroSemesters.sort((a, b) => (b.lastScraped || 0) - (a.lastScraped || 0));
+
+  // Determine latest semester id
+  const latestSemId = (data.currentSemesterId && nonZeroSemesters.some((s) => s.id === data.currentSemesterId))
+    ? data.currentSemesterId
+    : (nonZeroSemesters[0]?.id || "");
+
+  // Determine active semester: prefer existing valid selection, otherwise default to latest semester
+  let activeSemId = semSelect?.value || data.selectedSemesterId;
+  if (!activeSemId || !nonZeroSemesters.some((s) => s.id === activeSemId)) {
+    activeSemId = latestSemId;
+  }
+
+  // Populate semester selector: only list semesters with marks/courses
+  if (semSelect) {
+    if (nonZeroSemesters.length > 0) {
+      semSelect.innerHTML = nonZeroSemesters.map((s) => {
+        const count = Object.keys(s.courses || {}).length;
+        const isLatest = s.id === latestSemId;
+        const label = `${s.name} (${count} course${count !== 1 ? "s" : ""})${isLatest ? " - Latest" : ""}`;
+        const isSelected = s.id === activeSemId ? "selected" : "";
+        return `<option value="${escapeHtml(s.id)}" ${isSelected}>${escapeHtml(label)}</option>`;
+      }).join("");
+      semSelect.value = activeSemId;
+      if (semBar) semBar.style.display = "flex";
+    } else {
+      semSelect.innerHTML = '<option value="">No synced marks yet</option>';
+      if (semBar) semBar.style.display = "flex";
+    }
+  }
+
+  const activeSem = semesters[activeSemId] || null;
+  const activeSemName = activeSem?.name || (availableSemesters.find((s) => s.id === activeSemId)?.name || "Selected Semester");
+
+  if (semBadgeEl) {
+    semBadgeEl.textContent = activeSemName;
+    semBadgeEl.style.display = "inline-block";
+  }
+
+  const courses = activeSem?.courses || {};
+  const courseKeys = Object.keys(courses);
+  if (coursesCountEl) coursesCountEl.textContent = String(courseKeys.length);
+
+  if (containerEl) {
+    if (courseKeys.length === 0) {
+      if (activeSem) {
+        containerEl.innerHTML = `<p class="empty-marks-hint">No courses found in ${escapeHtml(activeSemName)}.</p>`;
+      } else {
+        containerEl.innerHTML = `
+          <div class="empty-marks-sem-box">
+            <p class="empty-marks-hint">Marks for <strong>${escapeHtml(activeSemName)}</strong> are not saved locally yet.</p>
+            <button type="button" class="marks-sync-sem-btn" id="syncCurrentSelectedSemBtn">🔄 Sync ${escapeHtml(activeSemName)}</button>
+          </div>
+        `;
+      }
+    } else {
+      containerEl.innerHTML = courseKeys.map((key) => {
+        const c = courses[key];
+        const assessments = c.assessments || [];
+        return `
+          <div class="course-marks-card">
+            <div class="course-marks-card-title">
+              <span><strong>${escapeHtml(c.courseCode)}</strong> - ${escapeHtml(c.courseTitle)}</span>
+              <span class="course-type-pill">${escapeHtml(c.subType || c.courseType || "General")}</span>
+            </div>
+            ${(c.slot || c.faculty || c.classNbr) ? `
+              <div class="course-marks-card-meta">
+                ${c.slot ? `<span>Slot: <strong>${escapeHtml(c.slot)}</strong></span>` : ""}
+                ${c.faculty ? `<span>Faculty: <strong>${escapeHtml(c.faculty)}</strong></span>` : ""}
+                ${c.classNbr ? `<span>Class: <strong>${escapeHtml(c.classNbr)}</strong></span>` : ""}
+              </div>
+            ` : ""}
+            <table class="marks-mini-table">
+              <thead>
+                <tr>
+                  <th>Assessment</th>
+                  <th>Max</th>
+                  <th>Wt%</th>
+                  <th>Scored</th>
+                  <th>Wt Scored</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${assessments.map((a) => `
+                  <tr>
+                    <td>${escapeHtml(a.title)}</td>
+                    <td>${escapeHtml(a.maxMarks)}</td>
+                    <td>${escapeHtml(a.weightagePercent)}</td>
+                    <td class="${a.scored !== "-" && a.scored !== "N/A" && a.scored !== "" ? "scored-val" : ""}">${escapeHtml(a.scored)}</td>
+                    <td>${escapeHtml(a.weightageEqui)}</td>
+                  </tr>
+                `).join("")}
+              </tbody>
+            </table>
+            ${c.summary ? `
+              <div class="course-marks-card-summary">
+                <span>Total: <strong>${escapeHtml(c.summary.totalScored || "-")}</strong> / ${escapeHtml(c.summary.totalMaxMarks || "-")}</span>
+                <span>Wt: <strong>${escapeHtml(c.summary.totalWeightageScored || "-")}</strong> / ${escapeHtml(c.summary.totalWeightage || "-")}</span>
+                ${c.summary.lostWeightage && c.summary.lostWeightage !== "-" ? `<span class="lost-weightage">Lost Wt: <strong>${escapeHtml(c.summary.lostWeightage)}</strong></span>` : ""}
+              </div>
+            ` : ""}
+          </div>
+        `;
+      }).join("");
+    }
+  }
+}
+
 document.addEventListener("DOMContentLoaded", async () => {
   const cards = Array.from(document.querySelectorAll(".site-card"));
   const hint = document.getElementById("activeSiteHint");
@@ -898,5 +1116,388 @@ document.addEventListener("DOMContentLoaded", async () => {
     populateSelect(sections);
     if (statusEl) statusEl.textContent = sections.length ? `Found ${sections.length} sections` : 'No exam sections found';
   })();
+
+  // --- Marks Dashboard Setup ---
+  await renderStoredMarksDashboard();
+
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area === "local" && changes[MARKS_STORAGE_KEY]) {
+      renderStoredMarksDashboard();
+    }
+  });
+
+  const toggleStoredMarksBtn = document.getElementById("toggleStoredMarksBtn");
+  const storedMarksPanel = document.getElementById("storedMarksPanel");
+  const storedMarksArrow = document.getElementById("storedMarksArrow");
+
+  if (toggleStoredMarksBtn && storedMarksPanel) {
+    toggleStoredMarksBtn.addEventListener("click", () => {
+      const isHidden = storedMarksPanel.style.display === "none";
+      storedMarksPanel.style.display = isHidden ? "flex" : "none";
+      if (storedMarksArrow) {
+        if (isHidden) {
+          storedMarksArrow.classList.add("open");
+        } else {
+          storedMarksArrow.classList.remove("open");
+        }
+      }
+    });
+  }
+
+  const clearMarksBadgeBtn = document.getElementById("clearMarksBadgeBtn");
+  if (clearMarksBadgeBtn) {
+    clearMarksBadgeBtn.addEventListener("click", async () => {
+      const recentBox = document.getElementById("recentMarksUpdatesBox");
+      if (recentBox) recentBox.style.display = "none";
+      const badgeEl = document.getElementById("marksUpdateBadge");
+      if (badgeEl) badgeEl.style.display = "none";
+
+      const stored = await chrome.storage.local.get(MARKS_STORAGE_KEY);
+      if (stored[MARKS_STORAGE_KEY]) {
+        stored[MARKS_STORAGE_KEY].unreadUpdatesCount = 0;
+        stored[MARKS_STORAGE_KEY].recentUpdates = [];
+        await chrome.storage.local.set({ [MARKS_STORAGE_KEY]: stored[MARKS_STORAGE_KEY] });
+        try {
+          if (window.VITCM_DB?.saveMarksData) {
+            await window.VITCM_DB.saveMarksData(stored[MARKS_STORAGE_KEY]);
+          }
+        } catch (_e) {}
+      }
+    });
+  }
+
+  const marksSemesterSelect = document.getElementById("marksSemesterSelect");
+  if (marksSemesterSelect) {
+    marksSemesterSelect.addEventListener("change", async () => {
+      const val = marksSemesterSelect.value;
+      const stored = await chrome.storage.local.get(MARKS_STORAGE_KEY);
+      if (stored[MARKS_STORAGE_KEY]) {
+        stored[MARKS_STORAGE_KEY].selectedSemesterId = val;
+        await chrome.storage.local.set({ [MARKS_STORAGE_KEY]: stored[MARKS_STORAGE_KEY] });
+      }
+      await renderStoredMarksDashboard();
+    });
+  }
+
+  const storedMarksContainer = document.getElementById("storedMarksContainer");
+  if (storedMarksContainer) {
+    storedMarksContainer.addEventListener("click", (e) => {
+      if (e.target && e.target.closest("#syncCurrentSelectedSemBtn")) {
+        if (syncMarksBtn) syncMarksBtn.click();
+      }
+    });
+  }
+
+  const syncAllSemestersBtn = document.getElementById("syncAllSemestersBtn");
+  if (syncAllSemestersBtn) {
+    syncAllSemestersBtn.addEventListener("click", async () => {
+      const origText = syncAllSemestersBtn.textContent;
+      syncAllSemestersBtn.textContent = "Syncing All...";
+      syncAllSemestersBtn.disabled = true;
+
+      try {
+        const tabs = await chrome.tabs.query({ url: "*://vtopcc.vit.ac.in/*" });
+        if (tabs.length === 0 || !tabs[0]?.id) {
+          if (quickActionStatus) {
+            quickActionStatus.textContent = "Opening VTOP tab. Please log in to sync all semesters.";
+          }
+          chrome.tabs.create({ url: "https://vtopcc.vit.ac.in/vtop/open/page" });
+          return;
+        }
+
+        if (quickActionStatus) {
+          quickActionStatus.textContent = "Syncing all semesters from VTOP in background...";
+        }
+
+        const res = await sendMessageWithInjectionFallback(tabs[0].id, {
+          message: "scrape_all_semesters"
+        });
+
+        if (res?.ok) {
+          await renderStoredMarksDashboard();
+          if (quickActionStatus) {
+            quickActionStatus.textContent = `🎉 Synced ${res.syncedCount || 0} of ${res.totalAvailable || 0} semester(s)!`;
+          }
+        } else {
+          if (quickActionStatus) {
+            quickActionStatus.textContent = `Sync notice: ${res?.reason || res?.error || "Could not sync all semesters."}`;
+          }
+        }
+      } catch (err) {
+        if (quickActionStatus) {
+          quickActionStatus.textContent = `Sync failed: ${err?.message || String(err)}`;
+        }
+      } finally {
+        syncAllSemestersBtn.textContent = origText;
+        syncAllSemestersBtn.disabled = false;
+      }
+    });
+  }
+
+  function generateMultiSheetExcel(data) {
+    const escapeXml = (str) => {
+      if (str === null || str === undefined) return "";
+      return String(str)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&apos;");
+    };
+
+    const semesters = data?.semesters || {};
+    const validSems = Object.values(semesters).filter(
+      (s) => s && s.courses && Object.keys(s.courses).length > 0
+    );
+
+    if (validSems.length === 0) {
+      return null;
+    }
+
+    let xml = '<?xml version="1.0" encoding="UTF-8"?>\n';
+    xml += '<?mso-application progid="Excel.Sheet"?>\n';
+    xml += '<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet"\n';
+    xml += ' xmlns:o="urn:schemas-microsoft-com:office:office"\n';
+    xml += ' xmlns:x="urn:schemas-microsoft-com:office:excel"\n';
+    xml += ' xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet"\n';
+    xml += ' xmlns:html="http://www.w3.org/TR/REC-html40">\n';
+    xml += ' <Styles>\n';
+    xml += '  <Style ss:ID="Default" ss:Name="Normal"><Alignment ss:Vertical="Center"/></Style>\n';
+    xml += '  <Style ss:ID="SemHeader"><Font ss:Bold="1" ss:Size="13" ss:Color="#FFFFFF"/><Interior ss:Color="#0F172A" ss:Pattern="Solid"/><Alignment ss:Horizontal="Left" ss:Vertical="Center"/></Style>\n';
+    xml += '  <Style ss:ID="CourseHeader"><Font ss:Bold="1" ss:Color="#FFFFFF"/><Interior ss:Color="#1E3A8A" ss:Pattern="Solid"/><Alignment ss:Horizontal="Left" ss:Vertical="Center"/></Style>\n';
+    xml += '  <Style ss:ID="ColHeader"><Font ss:Bold="1" ss:Color="#FFFFFF"/><Interior ss:Color="#334155" ss:Pattern="Solid"/><Alignment ss:Horizontal="Center" ss:Vertical="Center"/></Style>\n';
+    xml += '  <Style ss:ID="TotalRow"><Font ss:Bold="1" ss:Color="#000000"/><Interior ss:Color="#CBD5E1" ss:Pattern="Solid"/><Alignment ss:Horizontal="Center" ss:Vertical="Center"/></Style>\n';
+    xml += '  <Style ss:ID="DataCell"><Alignment ss:Horizontal="Center" ss:Vertical="Center"/></Style>\n';
+    xml += '  <Style ss:ID="DataLeft"><Alignment ss:Horizontal="Left" ss:Vertical="Center"/></Style>\n';
+    xml += ' </Styles>\n';
+
+    const usedSheetNames = new Set();
+
+    for (const sem of validSems) {
+      let rawSheetName = (sem.name || sem.id || "Semester").replace(/[\\/?*[\]:]/g, " ").trim().slice(0, 31);
+      if (!rawSheetName) rawSheetName = "Semester";
+      let sheetName = rawSheetName;
+      let counter = 1;
+      while (usedSheetNames.has(sheetName)) {
+        sheetName = `${rawSheetName.slice(0, 27)}_${counter++}`;
+      }
+      usedSheetNames.add(sheetName);
+
+      xml += ` <Worksheet ss:Name="${escapeXml(sheetName)}">\n`;
+      xml += '  <Table>\n';
+      xml += '   <Column ss:Width="45"/>\n';
+      xml += '   <Column ss:Width="200"/>\n';
+      xml += '   <Column ss:Width="70"/>\n';
+      xml += '   <Column ss:Width="85"/>\n';
+      xml += '   <Column ss:Width="70"/>\n';
+      xml += '   <Column ss:Width="80"/>\n';
+      xml += '   <Column ss:Width="95"/>\n';
+      xml += '   <Column ss:Width="80"/>\n';
+      xml += '   <Column ss:Width="160"/>\n';
+
+      // Semester Title Header
+      xml += '   <Row ss:Height="24">\n';
+      xml += `    <Cell ss:MergeAcross="8" ss:StyleID="SemHeader"><Data ss:Type="String">  ${escapeXml(sem.name || sem.id)}</Data></Cell>\n`;
+      xml += '   </Row>\n';
+      xml += '   <Row><Cell><Data ss:Type="String"></Data></Cell></Row>\n';
+
+      const courses = sem.courses || {};
+      let courseIndex = 1;
+
+      for (const [courseKey, course] of Object.entries(courses)) {
+        const courseTitleDisplay = `${course.courseCode || ""} - ${course.courseTitle || courseKey} (${course.subType || course.courseType || "General"})`;
+        const facultySlot = [
+          course.faculty ? `Faculty: ${course.faculty}` : "",
+          course.slot ? `Slot: ${course.slot}` : "",
+          course.classNbr ? `Class: ${course.classNbr}` : ""
+        ].filter(Boolean).join(" | ");
+
+        // Course Section Banner
+        xml += '   <Row ss:Height="20">\n';
+        xml += `    <Cell ss:MergeAcross="8" ss:StyleID="CourseHeader"><Data ss:Type="String">  ${courseIndex}. ${escapeXml(courseTitleDisplay)}${facultySlot ? `  [ ${escapeXml(facultySlot)} ]` : ""}</Data></Cell>\n`;
+        xml += '   </Row>\n';
+
+        // Assessment Column Headers
+        xml += '   <Row ss:Height="18">\n';
+        xml += '    <Cell ss:StyleID="ColHeader"><Data ss:Type="String">Sl.No.</Data></Cell>\n';
+        xml += '    <Cell ss:StyleID="ColHeader"><Data ss:Type="String">Mark Title</Data></Cell>\n';
+        xml += '    <Cell ss:StyleID="ColHeader"><Data ss:Type="String">Max Mark</Data></Cell>\n';
+        xml += '    <Cell ss:StyleID="ColHeader"><Data ss:Type="String">Weightage %</Data></Cell>\n';
+        xml += '    <Cell ss:StyleID="ColHeader"><Data ss:Type="String">Status</Data></Cell>\n';
+        xml += '    <Cell ss:StyleID="ColHeader"><Data ss:Type="String">Scored Mark</Data></Cell>\n';
+        xml += '    <Cell ss:StyleID="ColHeader"><Data ss:Type="String">Weightage Mark</Data></Cell>\n';
+        xml += '    <Cell ss:StyleID="ColHeader"><Data ss:Type="String">Class Avg</Data></Cell>\n';
+        xml += '    <Cell ss:StyleID="ColHeader"><Data ss:Type="String">Remark</Data></Cell>\n';
+        xml += '   </Row>\n';
+
+        const assessments = course.assessments || [];
+        assessments.forEach((ass, aIdx) => {
+          const scoredIsNum = ass.scored !== "-" && ass.scored !== "N/A" && ass.scored !== "" && !isNaN(Number(ass.scored));
+          const wtIsNum = ass.weightageEqui !== "-" && ass.weightageEqui !== "N/A" && ass.weightageEqui !== "" && !isNaN(Number(ass.weightageEqui));
+          const maxIsNum = !isNaN(Number(ass.maxMarks));
+          const wtPIsNum = !isNaN(Number(ass.weightagePercent));
+
+          xml += '   <Row>\n';
+          xml += `    <Cell ss:StyleID="DataCell"><Data ss:Type="Number">${aIdx + 1}</Data></Cell>\n`;
+          xml += `    <Cell ss:StyleID="DataLeft"><Data ss:Type="String">${escapeXml(ass.title)}</Data></Cell>\n`;
+          xml += `    <Cell ss:StyleID="DataCell"><Data ss:Type="${maxIsNum ? "Number" : "String"}">${escapeXml(ass.maxMarks)}</Data></Cell>\n`;
+          xml += `    <Cell ss:StyleID="DataCell"><Data ss:Type="${wtPIsNum ? "Number" : "String"}">${escapeXml(ass.weightagePercent)}</Data></Cell>\n`;
+          xml += `    <Cell ss:StyleID="DataCell"><Data ss:Type="String">${escapeXml(ass.status || "")}</Data></Cell>\n`;
+          xml += `    <Cell ss:StyleID="DataCell"><Data ss:Type="${scoredIsNum ? "Number" : "String"}">${escapeXml(ass.scored)}</Data></Cell>\n`;
+          xml += `    <Cell ss:StyleID="DataCell"><Data ss:Type="${wtIsNum ? "Number" : "String"}">${escapeXml(ass.weightageEqui)}</Data></Cell>\n`;
+          xml += `    <Cell ss:StyleID="DataCell"><Data ss:Type="String">${escapeXml(ass.classAvg || "-")}</Data></Cell>\n`;
+          xml += '    <Cell ss:StyleID="DataCell"><Data ss:Type="String"></Data></Cell>\n';
+          xml += '   </Row>\n';
+        });
+
+        // Summary row
+        if (course.summary) {
+          xml += '   <Row ss:StyleID="TotalRow">\n';
+          xml += '    <Cell ss:StyleID="TotalRow"><Data ss:Type="String">Total:</Data></Cell>\n';
+          xml += '    <Cell ss:StyleID="TotalRow"><Data ss:Type="String"></Data></Cell>\n';
+          xml += `    <Cell ss:StyleID="TotalRow"><Data ss:Type="String">${escapeXml(course.summary.totalMaxMarks || "-")}</Data></Cell>\n`;
+          xml += `    <Cell ss:StyleID="TotalRow"><Data ss:Type="String">${escapeXml(course.summary.totalWeightage || "-")}</Data></Cell>\n`;
+          xml += '    <Cell ss:StyleID="TotalRow"><Data ss:Type="String"></Data></Cell>\n';
+          xml += `    <Cell ss:StyleID="TotalRow"><Data ss:Type="String">${escapeXml(course.summary.totalScored || "-")}</Data></Cell>\n`;
+          xml += `    <Cell ss:StyleID="TotalRow"><Data ss:Type="String">${escapeXml(course.summary.totalWeightageScored || "-")}</Data></Cell>\n`;
+          xml += '    <Cell ss:StyleID="TotalRow"><Data ss:Type="String">-</Data></Cell>\n';
+          xml += `    <Cell ss:StyleID="TotalRow"><Data ss:Type="String">Lost Wt: ${escapeXml(course.summary.lostWeightage || "-")}</Data></Cell>\n`;
+          xml += '   </Row>\n';
+        }
+
+        xml += '   <Row><Cell><Data ss:Type="String"></Data></Cell></Row>\n';
+        courseIndex++;
+      }
+
+      xml += '  </Table>\n';
+      xml += ' </Worksheet>\n';
+    }
+
+    xml += '</Workbook>\n';
+    return xml;
+  }
+
+  const exportDbBtn = document.getElementById("exportDbBtn");
+  if (exportDbBtn) {
+    exportDbBtn.addEventListener("click", async () => {
+      try {
+        const stored = await chrome.storage.local.get(MARKS_STORAGE_KEY);
+        let data = stored[MARKS_STORAGE_KEY];
+        if (!data && window.VITCM_DB?.loadMarksData) {
+          data = await window.VITCM_DB.loadMarksData();
+        }
+        if (!data || !data.semesters || Object.keys(data.semesters).length === 0) {
+          if (quickActionStatus) quickActionStatus.textContent = "No marks found to export. Sync marks first.";
+          return;
+        }
+        const sqlText = window.VITCM_DB?.generateSqliteDump ? window.VITCM_DB.generateSqliteDump(data) : "";
+        if (!sqlText) {
+          if (quickActionStatus) quickActionStatus.textContent = "Failed to generate database dump.";
+          return;
+        }
+        const blob = new Blob([sqlText], { type: "application/x-sqlite3;charset=utf-8" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        const dateStr = new Date().toISOString().slice(0, 10);
+        a.download = `vit_marks_${dateStr}.db`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        if (quickActionStatus) quickActionStatus.textContent = `💾 Exported database as vit_marks_${dateStr}.db`;
+      } catch (err) {
+        if (quickActionStatus) quickActionStatus.textContent = `Export .db failed: ${err.message || String(err)}`;
+      }
+    });
+  }
+
+  const exportExcelBtn = document.getElementById("exportExcelBtn");
+  if (exportExcelBtn) {
+    exportExcelBtn.addEventListener("click", async () => {
+      try {
+        const stored = await chrome.storage.local.get(MARKS_STORAGE_KEY);
+        let data = stored[MARKS_STORAGE_KEY];
+        if (!data && window.VITCM_DB?.loadMarksData) {
+          data = await window.VITCM_DB.loadMarksData();
+        }
+        if (!data || !data.semesters || Object.keys(data.semesters).length === 0) {
+          if (quickActionStatus) quickActionStatus.textContent = "No marks found to export. Sync marks first.";
+          return;
+        }
+        const xml = generateMultiSheetExcel(data);
+        if (!xml) {
+          if (quickActionStatus) quickActionStatus.textContent = "No semester courses to export to Excel.";
+          return;
+        }
+        const blob = new Blob([xml], { type: "application/vnd.ms-excel;charset=utf-8" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        const dateStr = new Date().toISOString().slice(0, 10);
+        a.download = `vit_marks_all_semesters_${dateStr}.xls`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        if (quickActionStatus) quickActionStatus.textContent = "📊 Exported multi-sheet Excel file!";
+      } catch (err) {
+        if (quickActionStatus) quickActionStatus.textContent = `Export Excel failed: ${err.message || String(err)}`;
+      }
+    });
+  }
+
+  const syncMarksBtn = document.getElementById("syncMarksBtn");
+  const syncMarksIcon = document.getElementById("syncMarksIcon");
+  const syncMarksBtnText = document.getElementById("syncMarksBtnText");
+  const quickActionStatus = document.getElementById("quickActionStatus");
+
+  if (syncMarksBtn) {
+    syncMarksBtn.addEventListener("click", async () => {
+      if (syncMarksIcon) syncMarksIcon.classList.add("spin");
+      if (syncMarksBtnText) syncMarksBtnText.textContent = "Syncing...";
+
+      try {
+        const tabs = await chrome.tabs.query({ url: "*://vtopcc.vit.ac.in/*" });
+        if (tabs.length === 0 || !tabs[0]?.id) {
+          if (quickActionStatus) {
+            quickActionStatus.textContent = "Opening VTOP tab. Please log in to sync marks.";
+          }
+          chrome.tabs.create({ url: "https://vtopcc.vit.ac.in/vtop/open/page" });
+          return;
+        }
+
+        const tab = tabs[0];
+        const semSelect = document.getElementById("marksSemesterSelect");
+        const chosenSemId = semSelect ? semSelect.value : null;
+
+        const res = await sendMessageWithInjectionFallback(tab.id, {
+          message: "scrape_marks_now",
+          semesterSubId: chosenSemId
+        });
+
+        if (res?.ok) {
+          await renderStoredMarksDashboard();
+          const count = res.updatesCount || 0;
+          if (quickActionStatus) {
+            quickActionStatus.textContent = count > 0
+              ? `🎉 Synced! Found ${count} new mark update(s).`
+              : "✅ Synced! Marks are up to date.";
+          }
+        } else {
+          if (quickActionStatus) {
+            quickActionStatus.textContent = `Sync notice: ${res?.reason || res?.error || "Make sure you are logged in to VTOP."}`;
+          }
+        }
+      } catch (err) {
+        if (quickActionStatus) {
+          quickActionStatus.textContent = `Sync failed: ${err?.message || String(err)}`;
+        }
+      } finally {
+        if (syncMarksIcon) syncMarksIcon.classList.remove("spin");
+        if (syncMarksBtnText) syncMarksBtnText.textContent = "Sync";
+      }
+    });
+  }
 });
 

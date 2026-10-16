@@ -5,9 +5,9 @@
     "48": "icon48.png"
   },
   "name": "VIT Credential Manager",
-  "version": "2.3.1",
+  "version": "2.4.0",
   "description": "Dashboard-style credential manager for VTOP Student, VTOP FFCS, and LMS.",
-  "permissions": ["storage", "tabs", "scripting", "activeTab", "sidePanel"],
+  "permissions": ["storage", "tabs", "scripting", "activeTab", "sidePanel", "notifications", "alarms"],
   "host_permissions": [
     "https://vtopcc.vit.ac.in/*",
     "https://vconnectcc1.vit.ac.in/*",
@@ -43,6 +43,7 @@
         "captchaparser.js",
         "content.js",
         "timetable.js",
+        "db.js",
         "marks.js",
         "attendance.js",
         "exam_schedule.js",

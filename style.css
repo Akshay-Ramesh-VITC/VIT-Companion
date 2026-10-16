@@ -398,3 +398,397 @@ html.opera-popup .portal-launcher {
   color: var(--muted);
   font-size: 11px;
 }
+
+/* Marks Dashboard & Notification Styles */
+.marks-dashboard {
+  background: linear-gradient(180deg, #1e293b 0%, var(--panel) 100%);
+  border-radius: 12px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.marks-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.marks-header-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.marks-header-icon {
+  font-size: 22px;
+}
+
+.marks-title-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.marks-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: #fff;
+}
+
+.marks-badge {
+  background: #ef4444;
+  color: white;
+  font-size: 10px;
+  font-weight: 800;
+  padding: 2px 7px;
+  border-radius: 999px;
+  animation: pulse-badge 1.8s infinite;
+}
+
+@keyframes pulse-badge {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.08); opacity: 0.9; }
+}
+
+.marks-sub-text {
+  margin: 2px 0 0;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.marks-sync-btn {
+  background: #334155;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: #f1f5f9;
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  transition: 0.2s ease;
+}
+
+.marks-sync-btn:hover {
+  background: #475569;
+}
+
+.sync-icon.spin {
+  animation: spin 1s linear infinite;
+  display: inline-block;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+/* Semester Controls & Actions */
+.marks-controls-container {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: rgba(0, 0, 0, 0.22);
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  box-sizing: border-box;
+  width: 100%;
+}
+
+.marks-semester-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.marks-semester-icon {
+  font-size: 14px;
+  flex-shrink: 0;
+}
+
+.marks-semester-select {
+  flex: 1;
+  min-width: 0;
+  width: 100%;
+  background: #1e293b;
+  color: #f1f5f9;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 6px;
+  padding: 5px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  outline: none;
+  box-sizing: border-box;
+}
+
+.marks-semester-select:focus {
+  border-color: #38bdf8;
+}
+
+.marks-actions-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.marks-action-chip {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: #cbd5e1;
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-size: 10px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  transition: 0.15s ease;
+  user-select: none;
+}
+
+.marks-action-chip:hover {
+  background: rgba(56, 189, 248, 0.2);
+  border-color: rgba(56, 189, 248, 0.4);
+  color: #38bdf8;
+}
+
+.marks-action-chip:active {
+  transform: scale(0.97);
+}
+
+.empty-marks-sem-box {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 6px;
+  text-align: center;
+}
+
+.marks-sync-sem-btn {
+  background: #334155;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  color: #f1f5f9;
+  border-radius: 6px;
+  padding: 5px 12px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: 0.2s ease;
+}
+
+.marks-sync-sem-btn:hover {
+  background: #475569;
+}
+
+/* Recent Marks Box */
+.recent-marks-box {
+  background: rgba(34, 197, 94, 0.08);
+  border: 1px solid rgba(34, 197, 94, 0.3);
+  border-radius: 10px;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.recent-marks-box-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 12px;
+  color: #4ade80;
+}
+
+.marks-link-btn {
+  background: none;
+  border: none;
+  color: var(--muted);
+  font-size: 11px;
+  cursor: pointer;
+  text-decoration: underline;
+  padding: 0;
+}
+
+.marks-link-btn:hover {
+  color: #fff;
+}
+
+.recent-marks-list {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  max-height: 140px;
+  overflow-y: auto;
+}
+
+.recent-mark-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: rgba(0, 0, 0, 0.25);
+  padding: 6px 8px;
+  border-radius: 6px;
+  font-size: 11px;
+}
+
+.recent-mark-item .course-name {
+  font-weight: 600;
+  color: #f8fafc;
+}
+
+.recent-mark-item .ass-name {
+  color: #94a3b8;
+  font-size: 10px;
+}
+
+.recent-mark-item .score-tag {
+  font-weight: 700;
+  color: #22c55e;
+  background: rgba(34, 197, 94, 0.15);
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+/* Collapsible Stored Marks View */
+.stored-marks-collapsible {
+  border-top: 1px solid var(--line);
+  padding-top: 6px;
+}
+
+.marks-accordion-btn {
+  width: 100%;
+  background: none;
+  border: none;
+  color: #cbd5e1;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 0;
+}
+
+.marks-accordion-btn:hover {
+  color: #fff;
+}
+
+.accordion-arrow {
+  transition: transform 0.2s ease;
+  font-size: 10px;
+}
+
+.accordion-arrow.open {
+  transform: rotate(180deg);
+}
+
+.stored-marks-panel {
+  max-height: 250px;
+  overflow-y: auto;
+  margin-top: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.course-marks-card {
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 10px;
+  margin-bottom: 6px;
+}
+
+.course-marks-card-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: #e2e8f0;
+  margin-bottom: 4px;
+  display: flex;
+  justify-content: space-between;
+}
+
+.course-marks-card-meta {
+  font-size: 10px;
+  color: #94a3b8;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.course-marks-card-meta strong {
+  color: #cbd5e1;
+}
+
+.course-type-pill {
+  font-size: 10px;
+  color: #38bdf8;
+  background: rgba(56, 189, 248, 0.15);
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+
+.marks-mini-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 10px;
+  margin-top: 4px;
+}
+
+.marks-mini-table th {
+  text-align: left;
+  color: var(--muted);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  padding: 3px 2px;
+}
+
+.marks-mini-table td {
+  padding: 3px 2px;
+  color: #cbd5e1;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.marks-mini-table td.scored-val {
+  font-weight: 700;
+  color: #22c55e;
+}
+
+.course-marks-card-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 6px;
+  padding-top: 5px;
+  border-top: 1px dashed rgba(255, 255, 255, 0.1);
+  font-size: 10px;
+  color: #94a3b8;
+}
+
+.course-marks-card-summary strong {
+  color: #f1f5f9;
+}
+
+.course-marks-card-summary .lost-weightage strong {
+  color: #f87171;
+}
+
+.empty-marks-hint {
+  font-size: 11px;
+  color: var(--muted);
+  text-align: center;
+  margin: 10px 0;
+}

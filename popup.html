@@ -6,6 +6,7 @@
     <title>VIT Credential Manager</title>
     <link rel="stylesheet" href="style.css" />
     <script src="crypto.js"></script>
+    <script src="db.js"></script>
     <script src="popup.js" defer></script>
   </head>
   <body>
@@ -62,6 +63,64 @@
           <button type="button" id="copySelectedExamBtn" class="quick-btn" style="padding:6px;">Copy</button>
         </div>
         <p id="quickActionStatus" class="quick-status">Open a VTOP tab, then run an action.</p>
+      </section>
+
+      <section class="marks-dashboard" aria-label="VTOP Marks Monitor">
+        <div class="marks-card-header">
+          <div class="marks-header-left">
+            <span class="marks-header-icon">📊</span>
+            <div>
+              <div class="marks-title-wrap">
+                <span class="marks-title">VTOP Marks Monitor</span>
+                <span id="marksUpdateBadge" class="marks-badge" style="display: none;">0 New</span>
+              </div>
+              <p id="marksLastUpdated" class="marks-sub-text">Checking stored marks...</p>
+            </div>
+          </div>
+          <button type="button" id="syncMarksBtn" class="marks-sync-btn" title="Sync / Check Live Marks">
+            <span id="syncMarksIcon" class="sync-icon">🔄</span> <span id="syncMarksBtnText">Sync</span>
+          </button>
+        </div>
+
+        <div class="marks-controls-container" id="marksSemesterBar">
+          <div class="marks-semester-row">
+            <span class="marks-semester-icon">📅</span>
+            <select id="marksSemesterSelect" class="marks-semester-select" title="Switch Semester View">
+              <option value="">No synced semesters yet</option>
+            </select>
+          </div>
+          <div class="marks-actions-row">
+            <button type="button" id="syncAllSemestersBtn" class="marks-action-chip" title="Sync marks for all available semesters from VTOP">
+              🔄 Sync All
+            </button>
+            <button type="button" id="exportExcelBtn" class="marks-action-chip" title="Export all semesters as Excel workbook (.xls) with a sheet for each semester">
+              📊 Export Excel
+            </button>
+            <button type="button" id="exportDbBtn" class="marks-action-chip" title="Export marks database as SQLite database (.db)">
+              💾 Export .db
+            </button>
+          </div>
+        </div>
+
+        <div id="recentMarksUpdatesBox" class="recent-marks-box" style="display: none;">
+          <div class="recent-marks-box-header">
+            <span>🔔 <strong>New Marks Announced</strong></span>
+            <button type="button" id="clearMarksBadgeBtn" class="marks-link-btn">Dismiss</button>
+          </div>
+          <div id="recentMarksUpdatesList" class="recent-marks-list"></div>
+        </div>
+
+        <div class="stored-marks-collapsible">
+          <button type="button" id="toggleStoredMarksBtn" class="marks-accordion-btn">
+            <span>📑 Stored Marks (<span id="storedCoursesCount">0</span> courses) <span id="storedMarksSemBadge" class="course-type-pill" style="display:none; font-size:9px; margin-left:4px;"></span></span>
+            <span id="storedMarksArrow" class="accordion-arrow">▼</span>
+          </button>
+          <div id="storedMarksPanel" class="stored-marks-panel" style="display: none;">
+            <div id="storedMarksContainer">
+              <p class="empty-marks-hint">Login to VTOP to automatically scrape and view your marks here.</p>
+            </div>
+          </div>
+        </div>
       </section>
 
       <section class="site-card" data-site-key="vtop" aria-label="VTOP Student card">
