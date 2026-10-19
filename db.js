@@ -7,7 +7,7 @@
   "use strict";
 
   const DB_NAME = "vit_companion_marks_db";
-  const DB_VERSION = 2;
+  const DB_VERSION = 3;
 
   function openDatabase() {
     return new Promise((resolve, reject) => {
@@ -39,6 +39,10 @@
         if (!db.objectStoreNames.contains("calendar")) {
           const calStore = db.createObjectStore("calendar", { keyPath: "key" });
           calStore.createIndex("semesterId", "semesterId", { unique: false });
+        }
+        if (!db.objectStoreNames.contains("personal_events")) {
+          const peStore = db.createObjectStore("personal_events", { keyPath: "id" });
+          peStore.createIndex("date", "date", { unique: false });
         }
       };
 
@@ -231,8 +235,18 @@
       const calStore = tx.objectStore("calendar");
       const metaStore = tx.objectStore("metadata");
 
+      // CLEAR ALL OLD SEMESTER CALENDAR DATA (Only latest/current semester is stored)
+      calStore.clear();
+
       const semId = calData.semesterId;
+      const days = calData.days || [];
+      const startDate = calData.startDate || days[0]?.date || "";
+      const endDate = calData.endDate || days[days.length - 1]?.date || "";
+
       metaStore.put({ key: "calendar_latest_sem_id", value: semId });
+      metaStore.put({ key: "calendar_latest_sem_name", value: calData.semesterName || semId });
+      metaStore.put({ key: "calendar_start_date", value: startDate });
+      metaStore.put({ key: "calendar_end_date", value: endDate });
       metaStore.put({ key: "calendar_last_checked", value: calData.lastChecked || Date.now() });
 
       calStore.put({
@@ -241,15 +255,17 @@
         semesterName: calData.semesterName || semId,
         lastUpdated: calData.lastUpdated || Date.now(),
         lastChecked: calData.lastChecked || Date.now(),
-        daysCount: (calData.days || []).length,
+        daysCount: days.length,
         holidaysCount: calData.holidaysCount || 0,
         eventsCount: calData.eventsCount || 0,
         instructionalCount: calData.instructionalCount || 0,
         dayOrdersCount: calData.dayOrdersCount || 0,
-        days: calData.days || []
+        startDate,
+        endDate,
+        days: days
       });
 
-      (calData.days || []).forEach((d) => {
+      days.forEach((d) => {
         calStore.put({
           key: `day__${semId}__${d.date}`,
           semesterId: semId,
@@ -321,6 +337,94 @@
     }
   }
 
+  async function savePersonalEvents(events) {
+    if (!Array.isArray(events)) return false;
+    try {
+      const db = await openDatabase();
+      const tx = db.transaction(["personal_events", "metadata"], "readwrite");
+      const peStore = tx.objectStore("personal_events");
+      const metaStore = tx.objectStore("metadata");
+
+      metaStore.put({ key: "calendar_personal_events", value: events });
+
+      // Clear and re-populate with latest semester events
+      peStore.clear();
+      events.forEach((e) => {
+        if (e && e.id) peStore.put(e);
+      });
+
+      return new Promise((resolve) => {
+        tx.oncomplete = () => resolve(true);
+        tx.onerror = () => resolve(false);
+      });
+    } catch (err) {
+      console.warn("VIT Companion: IndexedDB personal events save error", err);
+      return false;
+    }
+  }
+
+  async function pruneOldSemesterPersonalEvents(calendarDays) {
+    if (!Array.isArray(calendarDays) || calendarDays.length === 0) return [];
+    try {
+      const minDate = calendarDays[0]?.date;
+      const maxDate = calendarDays[calendarDays.length - 1]?.date;
+      if (!minDate) return [];
+
+      const db = await openDatabase();
+      const tx = db.transaction(["personal_events", "metadata"], "readwrite");
+      const peStore = tx.objectStore("personal_events");
+      const metaStore = tx.objectStore("metadata");
+
+      const allEvents = await new Promise((resolve) => {
+        const req = peStore.getAll();
+        req.onsuccess = () => resolve(req.result || []);
+        req.onerror = () => resolve([]);
+      });
+
+      // Keep only events within current semester date range
+      const validEvents = allEvents.filter((e) => {
+        if (!e.date) return false;
+        if (minDate && e.date < minDate) return false;
+        if (maxDate && e.date > maxDate) return false;
+        return true;
+      });
+
+      if (validEvents.length !== allEvents.length) {
+        peStore.clear();
+        validEvents.forEach((e) => {
+          if (e && e.id) peStore.put(e);
+        });
+        metaStore.put({ key: "calendar_personal_events", value: validEvents });
+      }
+
+      await new Promise((resolve) => {
+        tx.oncomplete = () => resolve(true);
+        tx.onerror = () => resolve(false);
+      });
+
+      return validEvents;
+    } catch (err) {
+      console.warn("VIT Companion: IndexedDB personal events prune error", err);
+      return [];
+    }
+  }
+
+  async function loadPersonalEvents() {
+    try {
+      const db = await openDatabase();
+      const tx = db.transaction(["personal_events"], "readonly");
+      const peStore = tx.objectStore("personal_events");
+      return new Promise((resolve) => {
+        const req = peStore.getAll();
+        req.onsuccess = () => resolve(req.result || []);
+        req.onerror = () => resolve([]);
+      });
+    } catch (err) {
+      console.warn("VIT Companion: IndexedDB personal events load error", err);
+      return [];
+    }
+  }
+
   function generateSqliteDump(data) {
     const lines = [
       "-- ========================================================",
@@ -388,6 +492,16 @@
       "  is_event INTEGER,",
       "  event_type TEXT",
       ");",
+      "",
+      "CREATE TABLE IF NOT EXISTS personal_events (",
+      "  id TEXT PRIMARY KEY,",
+      "  title TEXT NOT NULL,",
+      "  date TEXT NOT NULL,",
+      "  time TEXT,",
+      "  category TEXT,",
+      "  description TEXT,",
+      "  created_at INTEGER",
+      ");",
       ""
     ];
 
@@ -425,12 +539,21 @@
       }
     }
 
+    lines.push("DELETE FROM academic_calendar;");
     const calendarDays = data?.calendar?.days || data?.academicCalendar?.days || [];
     const calSemId = data?.calendar?.semesterId || data?.academicCalendar?.semesterId || "";
     const calSemName = data?.calendar?.semesterName || data?.academicCalendar?.semesterName || "";
     for (const d of calendarDays) {
       lines.push(
         `INSERT OR REPLACE INTO academic_calendar (date, semester_id, semester_name, weekday, instructional, day_order, label, is_holiday, is_event, event_type) VALUES (${sqlEscape(d.date)}, ${sqlEscape(calSemId)}, ${sqlEscape(calSemName)}, ${sqlEscape(d.weekday)}, ${d.instructional ? 1 : 0}, ${sqlEscape(d.dayOrder || "")}, ${sqlEscape(d.label || "")}, ${d.isHoliday ? 1 : 0}, ${d.isEvent ? 1 : 0}, ${sqlEscape(d.eventType || "")});`
+      );
+    }
+
+    lines.push("DELETE FROM personal_events;");
+    const personalEvents = data?.personalEvents || [];
+    for (const pe of personalEvents) {
+      lines.push(
+        `INSERT OR REPLACE INTO personal_events (id, title, date, time, category, description, created_at) VALUES (${sqlEscape(pe.id)}, ${sqlEscape(pe.title)}, ${sqlEscape(pe.date)}, ${sqlEscape(pe.time || "")}, ${sqlEscape(pe.category || "personal")}, ${sqlEscape(pe.description || "")}, ${pe.createdAt || Date.now()});`
       );
     }
 
@@ -446,6 +569,9 @@
     loadMarksData,
     saveCalendarData,
     loadCalendarData,
+    savePersonalEvents,
+    loadPersonalEvents,
+    pruneOldSemesterPersonalEvents,
     generateSqliteDump
   };
 })();

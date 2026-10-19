@@ -149,6 +149,9 @@
             </select>
           </div>
           <div class="calendar-actions-row">
+            <button type="button" id="addPersonalEventBtn" class="calendar-action-chip personal-event-btn" title="Add personal event, assignment deadline, or reminder to your calendar">
+              ➕ Add Event
+            </button>
             <button type="button" id="exportIcsBtn" class="calendar-action-chip" title="Export universal .ics calendar to add holidays & events directly to phone calendar (iPhone/Android)">
               📅 Export .ics (Phone)
             </button>
@@ -178,6 +181,11 @@
             <span class="stat-icon">🔄</span>
             <span class="stat-label">Day Orders:</span>
             <strong id="calStatDayOrders">0</strong>
+          </div>
+          <div class="calendar-stat-item" title="Personal Events">
+            <span class="stat-icon">📌</span>
+            <span class="stat-label">Personal:</span>
+            <strong id="calStatPersonal">0</strong>
           </div>
         </div>
 
@@ -233,6 +241,7 @@
                   <button type="button" class="cal-tab-btn" data-cal-filter="holidays">🏖️ Holidays</button>
                   <button type="button" class="cal-tab-btn" data-cal-filter="events">📝 Exams & Events</button>
                   <button type="button" class="cal-tab-btn" data-cal-filter="dayorders">🔄 Day Orders</button>
+                  <button type="button" class="cal-tab-btn" data-cal-filter="personal">📌 Personal</button>
                 </div>
                 <input type="text" id="calendarSearchInput" class="calendar-search-input" placeholder="🔍 Search event, holiday, date..." />
               </div>
@@ -462,5 +471,53 @@
         </div>
       </section>
     </main>
+
+    <!-- Personal Event Modal Dialog -->
+    <div id="personalEventModal" class="cal-modal-overlay" style="display: none;">
+      <div class="cal-modal-card">
+        <div class="cal-modal-header">
+          <div class="cal-modal-title-wrap">
+            <span class="cal-modal-icon">📌</span>
+            <h3 id="personalEventModalTitle">Add Personal Event</h3>
+          </div>
+          <button type="button" id="closeEventModalBtn" class="cal-modal-close" title="Close">✕</button>
+        </div>
+        <form id="personalEventForm" class="cal-modal-form">
+          <input type="hidden" id="eventEditId" value="" />
+          <div class="cal-form-group">
+            <label for="eventTitleInput">Event Title *</label>
+            <input type="text" id="eventTitleInput" class="cal-input" placeholder="e.g. Project Submission, Quiz 2, Club Meet" required autocomplete="off" />
+          </div>
+          <div class="cal-form-row">
+            <div class="cal-form-group flex-1">
+              <label for="eventDateInput">Date *</label>
+              <input type="date" id="eventDateInput" class="cal-input" required />
+            </div>
+            <div class="cal-form-group flex-1">
+              <label for="eventCategorySelect">Category</label>
+              <select id="eventCategorySelect" class="cal-select">
+                <option value="personal">📌 Personal</option>
+                <option value="assignment">📝 Assignment / Project</option>
+                <option value="exam">⏰ Exam / Quiz</option>
+                <option value="reminder">🔔 Reminder</option>
+                <option value="club">👥 Club / Activity</option>
+              </select>
+            </div>
+          </div>
+          <div class="cal-form-group">
+            <label for="eventTimeInput">Time / Note (Optional)</label>
+            <input type="text" id="eventTimeInput" class="cal-input" placeholder="e.g. 11:59 PM, 2:30 PM, or All Day" autocomplete="off" />
+          </div>
+          <div class="cal-form-group">
+            <label for="eventDescInput">Notes / Description (Optional)</label>
+            <textarea id="eventDescInput" class="cal-textarea" rows="2" placeholder="Submission link, venue, team members, or notes..."></textarea>
+          </div>
+          <div class="cal-modal-actions">
+            <button type="button" id="cancelEventBtn" class="cal-btn-secondary">Cancel</button>
+            <button type="submit" id="saveEventBtn" class="cal-btn-primary">Save Event</button>
+          </div>
+        </form>
+      </div>
+    </div>
   </body>
 </html>

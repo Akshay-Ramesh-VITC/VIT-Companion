@@ -351,19 +351,18 @@
 
   /**
    * Save and process scraped calendar data.
+   * Strictly stores ONLY the latest / current semester calendar.
+   * Automatically clears out old semester calendar data and auto-deletes old semester personal events.
    */
   async function processCalendarData(days, semesterInfo, availableSemesters = null) {
     if (!days || days.length === 0) {
       return { ok: false, reason: "no-days" };
     }
 
-    const stored = await chrome.storage.local.get(CALENDAR_STORAGE_KEY);
-    const oldData = stored[CALENDAR_STORAGE_KEY] || {};
+    const semId = semesterInfo?.id || "current_semester";
+    const semName = semesterInfo?.name || "Current Semester";
 
-    const semId = semesterInfo?.id || oldData.semesterId || "current_semester";
-    const semName = semesterInfo?.name || oldData.semesterName || "Current Semester";
-
-    // Deduplicate and sort days
+    // Deduplicate and sort days chronologically
     const dayMap = {};
     days.forEach((d) => {
       dayMap[d.date] = d;
@@ -375,49 +374,54 @@
     const instructionalCount = sortedDays.filter((d) => d.isInstructional || d.instructional).length;
     const dayOrdersCount = sortedDays.filter((d) => Boolean(d.dayOrder)).length;
 
-    const semestersMap = oldData.semesters || {};
-    semestersMap[semId] = {
-      id: semId,
-      name: semName,
-      daysCount: sortedDays.length,
-      holidaysCount,
-      eventsCount,
-      instructionalCount,
-      dayOrdersCount,
-      lastUpdated: Date.now(),
-      days: sortedDays
-    };
+    const startDate = sortedDays[0]?.date || "";
+    const endDate = sortedDays[sortedDays.length - 1]?.date || "";
 
-    const existingAvail = oldData.availableSemesters || [];
-    const mergedAvail = [...existingAvail];
-    const incomingAvail = availableSemesters || (semesterInfo ? [semesterInfo] : []);
-    for (const s of incomingAvail) {
-      if (s && s.id && !mergedAvail.some((m) => m.id === s.id)) {
-        mergedAvail.push(s);
-      }
-    }
-
+    // Keep ONLY the latest / current semester calendar (no old semester retention)
     const calendarRecord = {
       semesterId: semId,
       semesterName: semName,
       selectedSemesterId: semId,
-      availableSemesters: mergedAvail,
-      semesters: semestersMap,
       days: sortedDays,
       daysCount: sortedDays.length,
       holidaysCount,
       eventsCount,
       instructionalCount,
       dayOrdersCount,
+      startDate,
+      endDate,
       lastChecked: Date.now(),
       lastUpdated: Date.now()
     };
 
+    // 1. Overwrite storage with ONLY the current / latest semester calendar
     await chrome.storage.local.set({ [CALENDAR_STORAGE_KEY]: calendarRecord });
 
+    // 2. Automatically delete/prune old semester personal events
+    const peKey = "vit_calendar_personal_events";
+    const storedPe = await chrome.storage.local.get(peKey);
+    let currentPersonalEvents = storedPe[peKey] || [];
+    if (Array.isArray(currentPersonalEvents) && currentPersonalEvents.length > 0 && startDate) {
+      const prunedEvents = currentPersonalEvents.filter((e) => {
+        if (!e.date) return false;
+        if (startDate && e.date < startDate) return false;
+        if (endDate && e.date > endDate) return false;
+        return true;
+      });
+
+      if (prunedEvents.length !== currentPersonalEvents.length) {
+        currentPersonalEvents = prunedEvents;
+        await chrome.storage.local.set({ [peKey]: prunedEvents });
+      }
+    }
+
+    // 3. Persist to on-disk IndexedDB (clears out old semester calendar rows and updates personal events)
     try {
       if (window.VITCM_DB?.saveCalendarData) {
         await window.VITCM_DB.saveCalendarData(calendarRecord);
+      }
+      if (window.VITCM_DB?.savePersonalEvents) {
+        await window.VITCM_DB.savePersonalEvents(currentPersonalEvents);
       }
     } catch (_dbErr) {
       console.warn("VIT Companion: DB save calendar error", _dbErr);
@@ -431,7 +435,9 @@
       holidaysCount,
       eventsCount,
       instructionalCount,
-      dayOrdersCount
+      dayOrdersCount,
+      startDate,
+      endDate
     };
   }
 

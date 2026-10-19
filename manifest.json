@@ -5,7 +5,7 @@
     "48": "icon48.png"
   },
   "name": "VIT Credential Manager",
-  "version": "2.4.0",
+  "version": "3.0.0",
   "description": "Dashboard-style credential manager for VTOP Student, VTOP FFCS, and LMS.",
   "permissions": ["storage", "tabs", "scripting", "activeTab", "sidePanel", "notifications", "alarms"],
   "host_permissions": [

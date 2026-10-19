@@ -781,10 +781,127 @@ function weekdayOf(dateStr) {
 }
 
 function getActiveCalendarRecord() {
-  if (!cachedCalendarData) return null;
-  const semSelect = document.getElementById("calendarSemesterSelect");
-  const chosenSemId = semSelect?.value || cachedCalendarData.selectedSemesterId || cachedCalendarData.semesterId;
-  return (cachedCalendarData.semesters && cachedCalendarData.semesters[chosenSemId]) || cachedCalendarData;
+  return cachedCalendarData || null;
+}
+
+const PERSONAL_EVENTS_STORAGE_KEY = "vit_calendar_personal_events";
+let cachedPersonalEvents = [];
+
+async function getPersonalEvents() {
+  const res = await chrome.storage.local.get(PERSONAL_EVENTS_STORAGE_KEY);
+  let events = res[PERSONAL_EVENTS_STORAGE_KEY] || null;
+  if (!events && window.VITCM_DB?.loadPersonalEvents) {
+    try {
+      events = await window.VITCM_DB.loadPersonalEvents();
+    } catch (_e) {}
+  }
+  cachedPersonalEvents = Array.isArray(events) ? events : [];
+  return cachedPersonalEvents;
+}
+
+async function savePersonalEvent(eventData) {
+  const events = await getPersonalEvents();
+  if (eventData.id) {
+    const idx = events.findIndex((e) => e.id === eventData.id);
+    if (idx !== -1) {
+      events[idx] = { ...events[idx], ...eventData, updatedAt: Date.now() };
+    } else {
+      events.push(eventData);
+    }
+  } else {
+    eventData.id = "pe_" + Date.now() + "_" + Math.random().toString(36).slice(2, 7);
+    eventData.createdAt = Date.now();
+    events.push(eventData);
+  }
+
+  events.sort((a, b) => (a.date || "").localeCompare(b.date || "") || (a.time || "").localeCompare(b.time || ""));
+  cachedPersonalEvents = events;
+  await chrome.storage.local.set({ [PERSONAL_EVENTS_STORAGE_KEY]: events });
+
+  try {
+    if (window.VITCM_DB?.savePersonalEvents) {
+      await window.VITCM_DB.savePersonalEvents(events);
+    }
+  } catch (_e) {}
+
+  return eventData;
+}
+
+async function deletePersonalEvent(eventId) {
+  let events = await getPersonalEvents();
+  events = events.filter((e) => e.id !== eventId);
+  cachedPersonalEvents = events;
+  await chrome.storage.local.set({ [PERSONAL_EVENTS_STORAGE_KEY]: events });
+
+  try {
+    if (window.VITCM_DB?.savePersonalEvents) {
+      await window.VITCM_DB.savePersonalEvents(events);
+    }
+  } catch (_e) {}
+
+  return true;
+}
+
+function openPersonalEventModal(prefillDate = null, editEvent = null) {
+  const modal = document.getElementById("personalEventModal");
+  const modalTitle = document.getElementById("personalEventModalTitle");
+  const editId = document.getElementById("eventEditId");
+  const titleInput = document.getElementById("eventTitleInput");
+  const dateInput = document.getElementById("eventDateInput");
+  const catSelect = document.getElementById("eventCategorySelect");
+  const timeInput = document.getElementById("eventTimeInput");
+  const descInput = document.getElementById("eventDescInput");
+
+  if (!modal) return;
+
+  const activeRecord = getActiveCalendarRecord();
+  const days = activeRecord?.days || [];
+  const semStartDate = activeRecord?.startDate || days[0]?.date || "";
+  const semEndDate = activeRecord?.endDate || days[days.length - 1]?.date || "";
+
+  if (dateInput) {
+    if (semStartDate) dateInput.min = semStartDate;
+    if (semEndDate) dateInput.max = semEndDate;
+  }
+
+  if (editEvent) {
+    if (modalTitle) modalTitle.textContent = "Edit Personal Event";
+    if (editId) editId.value = editEvent.id || "";
+    if (titleInput) titleInput.value = editEvent.title || "";
+    if (dateInput) dateInput.value = editEvent.date || "";
+    if (catSelect) catSelect.value = editEvent.category || "personal";
+    if (timeInput) timeInput.value = editEvent.time || "";
+    if (descInput) descInput.value = editEvent.description || "";
+  } else {
+    if (modalTitle) modalTitle.textContent = "Add Personal Event";
+    if (editId) editId.value = "";
+    if (titleInput) titleInput.value = "";
+
+    const todayStr = new Date().toISOString().slice(0, 10);
+    let targetDate = prefillDate || selectedDayDate;
+    if (!targetDate || (semStartDate && targetDate < semStartDate) || (semEndDate && targetDate > semEndDate)) {
+      if (todayStr >= semStartDate && (!semEndDate || todayStr <= semEndDate)) {
+        targetDate = todayStr;
+      } else {
+        targetDate = semStartDate || todayStr;
+      }
+    }
+
+    if (dateInput) dateInput.value = targetDate;
+    if (catSelect) catSelect.value = "personal";
+    if (timeInput) timeInput.value = "";
+    if (descInput) descInput.value = "";
+  }
+
+  modal.style.display = "flex";
+  if (titleInput) {
+    setTimeout(() => titleInput.focus(), 50);
+  }
+}
+
+function closePersonalEventModal() {
+  const modal = document.getElementById("personalEventModal");
+  if (modal) modal.style.display = "none";
 }
 
 function showCalendarDayDetail(day) {
@@ -830,6 +947,55 @@ function showCalendarDayDetail(day) {
     else desc = "Non-instructional day";
   }
 
+  // Personal events for this date
+  const dayPersonalEvents = (cachedPersonalEvents || []).filter((e) => e.date === day.date);
+  const categoryLabels = {
+    personal: "📌 Personal",
+    assignment: "📝 Assignment",
+    exam: "⏰ Exam/Quiz",
+    reminder: "🔔 Reminder",
+    club: "👥 Club"
+  };
+
+  let peHtml = "";
+  if (dayPersonalEvents.length > 0) {
+    peHtml = `
+      <div class="cal-pe-wrap">
+        <div class="cal-pe-header">
+          <span class="cal-pe-title">📌 Personal Events (${dayPersonalEvents.length})</span>
+          <button type="button" class="btn-add-event-mini" data-action="add-pe" data-date="${escapeHtml(day.date)}">➕ Add More</button>
+        </div>
+        <div class="cal-pe-list">
+          ${dayPersonalEvents.map((pe) => `
+            <div class="cal-pe-item cat-${escapeHtml(pe.category || 'personal')}">
+              <div class="cal-pe-top">
+                <span class="cal-pe-name">${escapeHtml(pe.title)}</span>
+                <div class="cal-pe-actions">
+                  <button type="button" class="cal-pe-btn btn-edit" data-action="edit-pe" data-id="${escapeHtml(pe.id)}" title="Edit event">✏️</button>
+                  <button type="button" class="cal-pe-btn btn-del" data-action="del-pe" data-id="${escapeHtml(pe.id)}" title="Delete event">🗑️</button>
+                </div>
+              </div>
+              <div class="cal-pe-meta">
+                <span class="cal-badge badge-${escapeHtml(pe.category || 'personal')}">${categoryLabels[pe.category] || "📌 Event"}</span>
+                ${pe.time ? `<span>⏰ ${escapeHtml(pe.time)}</span>` : ""}
+              </div>
+              ${pe.description ? `<div class="cal-pe-desc">${escapeHtml(pe.description)}</div>` : ""}
+            </div>
+          `).join("")}
+        </div>
+      </div>
+    `;
+  } else {
+    peHtml = `
+      <div class="cal-pe-wrap">
+        <div class="cal-pe-header">
+          <span class="cal-pe-title">📌 Personal Events</span>
+          <button type="button" class="btn-add-event-mini" data-action="add-pe" data-date="${escapeHtml(day.date)}">➕ Add Event</button>
+        </div>
+      </div>
+    `;
+  }
+
   detailBox.style.display = "block";
   detailBox.innerHTML = `
     <div class="cal-detail-card">
@@ -842,6 +1008,7 @@ function showCalendarDayDetail(day) {
         <span>Status: <strong>${escapeHtml(day.instructionalStatus || (day.isInstructional ? "Instructional Day" : "Non-Instructional Day"))}</strong></span>
         ${day.dayOrder ? `<span> · Timetable: <strong>${escapeHtml(day.dayOrder)} Day Order</strong></span>` : ""}
       </div>
+      ${peHtml}
     </div>
   `;
 }
@@ -928,17 +1095,29 @@ function renderCalendarMonthTable(activeRecord, monthKey) {
           tagHtml = '<span class="cell-empty-label">Off</span>';
         }
 
+        // Personal events on this date
+        const datePersonalEvents = (cachedPersonalEvents || []).filter((e) => e.date === dateStr);
+        let peTagHtml = "";
+        if (datePersonalEvents.length > 0) {
+          const firstPe = datePersonalEvents[0];
+          const peCategoryClass = firstPe.category === "assignment" ? "tag-assignment" : (firstPe.category === "exam" ? "tag-exam-personal" : (firstPe.category === "reminder" ? "tag-reminder" : (firstPe.category === "club" ? "tag-club" : "tag-personal")));
+          const moreCount = datePersonalEvents.length > 1 ? ` (+${datePersonalEvents.length - 1})` : "";
+          peTagHtml = `<span class="cell-tag ${peCategoryClass}" title="📌 ${escapeHtml(firstPe.title)}${moreCount}">📌 ${escapeHtml(firstPe.title)}${moreCount}</span>`;
+        }
+
         const todayPill = isToday ? '<span class="cell-today-pill">TODAY</span>' : "";
         const isSelected = selectedDayDate === dateStr ? "selected-cell" : "";
+        const hasPeClass = datePersonalEvents.length > 0 ? "has-personal" : "";
 
         rowsHtml += `
-          <td class="cal-table-cell ${cellTypeClass} ${isToday ? 'cell-today' : ''} ${isSelected}" data-date="${escapeHtml(dateStr)}">
+          <td class="cal-table-cell ${cellTypeClass} ${isToday ? 'cell-today' : ''} ${isSelected} ${hasPeClass}" data-date="${escapeHtml(dateStr)}">
             <div class="cell-top-row">
               <span class="cell-num">${dayCounter}</span>
               ${todayPill}
             </div>
             <div class="cell-body">
               ${tagHtml}
+              ${peTagHtml}
             </div>
           </td>
         `;
@@ -1061,6 +1240,33 @@ function generateIcsCalendar(calData) {
     lines.push("END:VEVENT");
   });
 
+  (cachedPersonalEvents || []).forEach((pe, pIdx) => {
+    const dtStart = formatIcsDate(pe.date);
+    const dtEnd = getNextDateIcs(pe.date);
+    if (!dtStart || !dtEnd) return;
+
+    const catEmoji = pe.category === "assignment" ? "📝" : (pe.category === "exam" ? "⏰" : (pe.category === "reminder" ? "🔔" : (pe.category === "club" ? "👥" : "📌")));
+    const summary = `${catEmoji} ${pe.title}`;
+    const descLines = [];
+    if (pe.category) descLines.push(`Category: ${pe.category.toUpperCase()}`);
+    if (pe.time) descLines.push(`Time: ${pe.time}`);
+    if (pe.description) descLines.push(`Notes: ${pe.description}`);
+    descLines.push("Personal Event in VIT Companion");
+
+    const uid = `vitcal-personal-${pe.id || pIdx}@vitcompanion`;
+
+    lines.push("BEGIN:VEVENT");
+    lines.push(`UID:${uid}`);
+    lines.push(`DTSTAMP:${nowUtc}`);
+    lines.push(`DTSTART;VALUE=DATE:${dtStart}`);
+    lines.push(`DTEND;VALUE=DATE:${dtEnd}`);
+    lines.push(`SUMMARY:${escapeIcs(summary)}`);
+    lines.push(`DESCRIPTION:${escapeIcs(descLines.join("\n"))}`);
+    lines.push("STATUS:CONFIRMED");
+    lines.push("TRANSP:TRANSPARENT");
+    lines.push("END:VEVENT");
+  });
+
   lines.push("END:VCALENDAR");
   return lines.join("\r\n");
 }
@@ -1101,6 +1307,8 @@ function generateMobileHtmlCalendar(calData) {
   const holidaysCount = days.filter((d) => d.isHoliday).length;
   const eventsCount = days.filter((d) => d.isExam || d.isEvent || d.isFest).length;
   const dayOrdersCount = days.filter((d) => Boolean(d.dayOrder)).length;
+  const personalEvents = cachedPersonalEvents || [];
+  const personalCount = personalEvents.length;
 
   let monthsHtml = "";
   for (const [mKey, mGroup] of monthsMap.entries()) {
@@ -1172,13 +1380,25 @@ function generateMobileHtmlCalendar(calData) {
             badgeText = "📚 Class Day";
           }
 
+          // Personal events on this date
+          const datePersonalEvents = personalEvents.filter((e) => e.date === dateStr);
+          let peChip = "";
+          if (datePersonalEvents.length > 0) {
+            const firstPe = datePersonalEvents[0];
+            const catClass = firstPe.category === "assignment" ? "chip-assignment" : (firstPe.category === "exam" ? "chip-exam-pe" : (firstPe.category === "reminder" ? "chip-reminder" : (firstPe.category === "club" ? "chip-club" : "chip-personal")));
+            const moreCount = datePersonalEvents.length > 1 ? ` (+${datePersonalEvents.length - 1})` : "";
+            peChip = `<span class="mob-chip ${catClass}" title="📌 ${escapeHtml(firstPe.title)}${moreCount}">📌 ${escapeHtml(firstPe.title)}${moreCount}</span>`;
+          }
+          const hasPeClass = datePersonalEvents.length > 0 ? "has-personal" : "";
+
           monthTableRows += `
-            <td class="mob-cell ${cellType}" data-date="${escapeHtml(dateStr)}" data-day="${dayCounter}" data-title="${escapeHtml(descText || badgeText || 'Day ' + dayCounter)}" data-status="${escapeHtml(day.instructionalStatus || '')}" data-badge="${escapeHtml(badgeText)}" data-dayorder="${escapeHtml(day.dayOrder || '')}">
+            <td class="mob-cell ${cellType} ${hasPeClass}" data-date="${escapeHtml(dateStr)}" data-day="${dayCounter}" data-title="${escapeHtml(descText || badgeText || 'Day ' + dayCounter)}" data-status="${escapeHtml(day.instructionalStatus || '')}" data-badge="${escapeHtml(badgeText)}" data-dayorder="${escapeHtml(day.dayOrder || '')}" data-pe="${escapeHtml(JSON.stringify(datePersonalEvents))}">
               <div class="mob-cell-top">
                 <span class="mob-cell-num">${dayCounter}</span>
               </div>
               <div class="mob-cell-body">
                 ${chip}
+                ${peChip}
               </div>
             </td>
           `;
@@ -1223,8 +1443,28 @@ function generateMobileHtmlCalendar(calData) {
         titleText = day.eventDescription || day.instructionalStatus || "Scheduled Day";
       }
 
+      // Personal events on this card
+      const datePersonalEvents = personalEvents.filter((e) => e.date === day.date);
+      let peSectionHtml = "";
+      if (datePersonalEvents.length > 0) {
+        peSectionHtml = `
+          <div class="mob-pe-list">
+            ${datePersonalEvents.map((pe) => `
+              <div class="mob-pe-item">
+                <div class="mob-pe-title-row">
+                  <span class="mob-pe-name">📌 ${escapeHtml(pe.title)}</span>
+                  ${pe.time ? `<span class="mob-pe-time">⏰ ${escapeHtml(pe.time)}</span>` : ""}
+                </div>
+                ${pe.description ? `<div class="mob-pe-desc">${escapeHtml(pe.description)}</div>` : ""}
+              </div>
+            `).join("")}
+          </div>
+        `;
+      }
+      const peSearchStr = datePersonalEvents.map((pe) => `${pe.title} ${pe.description || ""} ${pe.category || ""}`).join(" ");
+
       daysInMonthHtml += `
-        <div class="day-card ${cardType}" data-type="${cardType}" data-search="${escapeHtml((day.date + " " + wk + " " + titleText + " " + subText).toLowerCase())}">
+        <div class="day-card ${cardType} ${datePersonalEvents.length > 0 ? 'has-personal' : ''}" data-type="${cardType}" data-has-personal="${datePersonalEvents.length > 0 ? 'true' : 'false'}" data-search="${escapeHtml((day.date + " " + wk + " " + titleText + " " + subText + " " + peSearchStr).toLowerCase())}">
           <div class="date-col">
             <span class="date-num">${escapeHtml(dayNum)}</span>
             <span class="date-wk">${escapeHtml(wk)}</span>
@@ -1235,6 +1475,7 @@ function generateMobileHtmlCalendar(calData) {
               ${badgeHtml}
             </div>
             ${subText ? `<span class="day-sub">${escapeHtml(subText)}</span>` : ""}
+            ${peSectionHtml}
           </div>
         </div>
       `;
@@ -1368,7 +1609,7 @@ function generateMobileHtmlCalendar(calData) {
       margin-bottom: 12px;
     }
     @media (min-width: 500px) {
-      .stats-grid { grid-template-columns: repeat(4, 1fr); }
+      .stats-grid { grid-template-columns: repeat(5, 1fr); }
     }
     .stat-chip {
       background: var(--card);
@@ -1513,6 +1754,9 @@ function generateMobileHtmlCalendar(calData) {
     .mob-cell.selected-cell {
       box-shadow: inset 0 0 0 2px #38bdf8;
     }
+    .mob-cell.has-personal {
+      border-bottom: 2px solid #3b82f6;
+    }
     .mob-cell-top {
       display: flex;
       justify-content: space-between;
@@ -1546,6 +1790,11 @@ function generateMobileHtmlCalendar(calData) {
     .chip-dayorder { background: rgba(56, 189, 248, 0.25); color: #93c5fd; }
     .chip-exam { background: rgba(168, 85, 247, 0.25); color: #d8b4fe; }
     .chip-fest { background: rgba(236, 72, 153, 0.25); color: #f472b6; }
+    .chip-personal { background: rgba(59, 130, 246, 0.25); color: #93c5fd; }
+    .chip-assignment { background: rgba(245, 158, 11, 0.25); color: #fcd34d; }
+    .chip-exam-pe { background: rgba(239, 68, 68, 0.25); color: #fca5a5; }
+    .chip-reminder { background: rgba(16, 185, 129, 0.25); color: #6ee7b7; }
+    .chip-club { background: rgba(168, 85, 247, 0.25); color: #d8b4fe; }
     .mob-dot-class { color: #4ade80; font-size: 8px; opacity: 0.7; }
     .mob-detail-box {
       background: #1e293b;
@@ -1606,7 +1855,7 @@ function generateMobileHtmlCalendar(calData) {
     }
     .day-card {
       display: flex;
-      align-items: center;
+      align-items: flex-start;
       gap: 10px;
       background: var(--card);
       border: 1px solid var(--card-border);
@@ -1624,6 +1873,9 @@ function generateMobileHtmlCalendar(calData) {
     .day-card.type-dayorder {
       background: var(--dayorder-bg);
       border-color: rgba(56, 189, 248, 0.4);
+    }
+    .day-card.has-personal {
+      border-left: 3px solid #3b82f6;
     }
     .date-col {
       display: flex;
@@ -1654,6 +1906,13 @@ function generateMobileHtmlCalendar(calData) {
     .badge-dayorder { background: rgba(56, 189, 248, 0.25); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.4); }
     .badge-fest { background: rgba(236, 72, 153, 0.25); color: #f472b6; border: 1px solid rgba(236, 72, 153, 0.4); }
     .badge-class { background: rgba(34, 197, 94, 0.2); color: #4ade80; border: 1px solid rgba(34, 197, 94, 0.3); }
+    .badge-personal { background: rgba(59, 130, 246, 0.25); color: #93c5fd; border: 1px solid rgba(59, 130, 246, 0.4); }
+    .mob-pe-list { margin-top: 6px; display: flex; flex-direction: column; gap: 4px; border-top: 1px dashed rgba(255, 255, 255, 0.1); padding-top: 5px; }
+    .mob-pe-item { font-size: 11px; background: rgba(59, 130, 246, 0.1); border-left: 3px solid #3b82f6; padding: 4px 6px; border-radius: 4px; display: flex; flex-direction: column; gap: 2px; }
+    .mob-pe-title-row { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+    .mob-pe-name { font-weight: 600; color: #93c5fd; font-size: 11px; }
+    .mob-pe-time { font-size: 10px; color: #cbd5e1; }
+    .mob-pe-desc { font-size: 10px; color: var(--muted); }
     .hidden { display: none !important; }
   </style>
 </head>
@@ -1690,6 +1949,10 @@ function generateMobileHtmlCalendar(calData) {
       <span class="val">${dayOrdersCount}</span>
       <span class="lbl">🔄 Day Orders</span>
     </div>
+    <div class="stat-chip">
+      <span class="val">${personalCount}</span>
+      <span class="lbl">📌 Personal</span>
+    </div>
   </div>
 
   <div class="filter-sticky">
@@ -1704,6 +1967,7 @@ function generateMobileHtmlCalendar(calData) {
       <button class="tab-btn" data-filter="type-exam">📝 Exams (${eventsCount})</button>
       <button class="tab-btn" data-filter="type-dayorder">🔄 Day Orders (${dayOrdersCount})</button>
       <button class="tab-btn" data-filter="type-class">📚 Classes (${instructionalCount})</button>
+      <button class="tab-btn" data-filter="type-personal">📌 Personal (${personalCount})</button>
     </div>
   </div>
 
@@ -1715,6 +1979,7 @@ function generateMobileHtmlCalendar(calData) {
     </div>
     <div id="mobDetailDesc" class="mob-detail-desc"></div>
     <div id="mobDetailStatus" class="mob-detail-sub"></div>
+    <div id="mobDetailPersonalEvents" style="display: none;"></div>
   </div>
 
   <main id="calendarMonthsContainer">
@@ -1736,6 +2001,7 @@ function generateMobileHtmlCalendar(calData) {
       var detailBadge = document.getElementById('mobDetailBadge');
       var detailDesc = document.getElementById('mobDetailDesc');
       var detailStatus = document.getElementById('mobDetailStatus');
+      var detailPe = document.getElementById('mobDetailPersonalEvents');
 
       function setView(view) {
         currentView = view;
@@ -1768,6 +2034,7 @@ function generateMobileHtmlCalendar(calData) {
           var status = cell.getAttribute('data-status');
           var badge = cell.getAttribute('data-badge');
           var dayOrder = cell.getAttribute('data-dayorder');
+          var peRaw = cell.getAttribute('data-pe');
 
           if (detailDate) detailDate.textContent = date;
           if (detailBadge) {
@@ -1787,6 +2054,26 @@ function generateMobileHtmlCalendar(calData) {
             if (dayOrder) subParts.push('Timetable: ' + dayOrder + ' Day Order');
             detailStatus.textContent = subParts.join(' · ');
           }
+
+          if (detailPe) {
+            var peItems = [];
+            try { if (peRaw) peItems = JSON.parse(peRaw); } catch(e) {}
+            if (peItems && peItems.length > 0) {
+              detailPe.style.display = 'block';
+              detailPe.innerHTML = '<div style="font-size:11px;font-weight:700;color:#93c5fd;margin:8px 0 3px;">📌 Personal Events:</div>' +
+                peItems.map(function(p) {
+                  return '<div style="font-size:11px;background:rgba(59,130,246,0.15);padding:4px 6px;border-radius:4px;margin-bottom:3px;border-left:2px solid #3b82f6;"><strong>' +
+                    (p.title || '') + '</strong>' +
+                    (p.time ? ' (⏰ ' + p.time + ')' : '') +
+                    (p.description ? ' - ' + p.description : '') +
+                  '</div>';
+                }).join('');
+            } else {
+              detailPe.style.display = 'none';
+              detailPe.innerHTML = '';
+            }
+          }
+
           if (detailBox) {
             detailBox.style.display = 'block';
             detailBox.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
@@ -1804,7 +2091,8 @@ function generateMobileHtmlCalendar(calData) {
           var cards = sec.querySelectorAll('.day-card');
           var visibleInMonth = 0;
           cards.forEach(function(card) {
-            var matchesType = (currentFilter === 'all') || card.classList.contains(currentFilter);
+            var matchesType = (currentFilter === 'all') ||
+              (currentFilter === 'type-personal' ? card.getAttribute('data-has-personal') === 'true' : card.classList.contains(currentFilter));
             var matchesSearch = !query || card.getAttribute('data-search').indexOf(query) !== -1;
             if (matchesType && matchesSearch) {
               card.classList.remove('hidden');
@@ -1857,10 +2145,13 @@ async function renderAcademicCalendarDashboard(activeFilter = currentCalendarFil
   const statHol = document.getElementById("calStatHolidays");
   const statEve = document.getElementById("calStatEvents");
   const statDay = document.getElementById("calStatDayOrders");
+  const statPersonal = document.getElementById("calStatPersonal");
   const daysCountEl = document.getElementById("calendarTotalDaysCount");
   const containerEl = document.getElementById("calendarDaysContainer");
 
   if (!lastUpdatedEl) return;
+
+  await getPersonalEvents();
 
   const stored = await chrome.storage.local.get(CALENDAR_STORAGE_KEY);
   let calData = stored[CALENDAR_STORAGE_KEY] || null;
@@ -1872,6 +2163,31 @@ async function renderAcademicCalendarDashboard(activeFilter = currentCalendarFil
         await chrome.storage.local.set({ [CALENDAR_STORAGE_KEY]: calData });
       }
     } catch (_dbErr) {}
+  }
+
+  // Migrate legacy multi-semester calendar store if present: retain ONLY the latest semester
+  if (calData && calData.semesters) {
+    const chosenSemId = calData.selectedSemesterId || calData.semesterId || Object.keys(calData.semesters)[0];
+    const latestSemRecord = calData.semesters[chosenSemId] || calData;
+    calData = {
+      semesterId: latestSemRecord.id || chosenSemId,
+      semesterName: latestSemRecord.name || latestSemRecord.semesterName || "Current Semester",
+      selectedSemesterId: latestSemRecord.id || chosenSemId,
+      days: latestSemRecord.days || [],
+      daysCount: (latestSemRecord.days || []).length,
+      holidaysCount: latestSemRecord.holidaysCount || 0,
+      eventsCount: latestSemRecord.eventsCount || 0,
+      instructionalCount: latestSemRecord.instructionalCount || 0,
+      dayOrdersCount: latestSemRecord.dayOrdersCount || 0,
+      startDate: latestSemRecord.startDate || latestSemRecord.days?.[0]?.date || "",
+      endDate: latestSemRecord.endDate || latestSemRecord.days?.[latestSemRecord.days?.length - 1]?.date || "",
+      lastChecked: calData.lastChecked || Date.now(),
+      lastUpdated: calData.lastUpdated || Date.now()
+    };
+    await chrome.storage.local.set({ [CALENDAR_STORAGE_KEY]: calData });
+    if (window.VITCM_DB?.saveCalendarData) {
+      await window.VITCM_DB.saveCalendarData(calData);
+    }
   }
 
   cachedCalendarData = calData;
@@ -1888,30 +2204,37 @@ async function renderAcademicCalendarDashboard(activeFilter = currentCalendarFil
     return;
   }
 
-  const availableSemesters = calData.availableSemesters || [];
-  const semestersMap = calData.semesters || {};
-  let chosenSemId = semSelect?.value || calData.selectedSemesterId || calData.semesterId;
+  const activeRecord = calData;
+  const days = calData.days || [];
+  const activeSemName = calData.semesterName || "Current Semester";
+  const semStartDate = calData.startDate || days[0]?.date || "";
+  const semEndDate = calData.endDate || days[days.length - 1]?.date || "";
 
-  if (semSelect) {
-    const semOptions = availableSemesters.length > 0
-      ? availableSemesters
-      : [{ id: calData.semesterId, name: calData.semesterName || calData.semesterId }];
+  // Automatically delete any personal events from old semesters (outside current semester date bounds)
+  if (days.length > 0 && semStartDate) {
+    const validPes = (cachedPersonalEvents || []).filter((e) => {
+      if (!e.date) return false;
+      if (semStartDate && e.date < semStartDate) return false;
+      if (semEndDate && e.date > semEndDate) return false;
+      return true;
+    });
 
-    semSelect.innerHTML = semOptions.map((s) => {
-      const isSelected = s.id === chosenSemId ? "selected" : "";
-      const isLatest = s.id === calData.semesterId;
-      const label = `${s.name}${isLatest ? " (Latest)" : ""}`;
-      return `<option value="${escapeHtml(s.id)}" ${isSelected}>${escapeHtml(label)}</option>`;
-    }).join("");
-
-    if (chosenSemId) {
-      semSelect.value = chosenSemId;
+    if (validPes.length !== (cachedPersonalEvents || []).length) {
+      cachedPersonalEvents = validPes;
+      await chrome.storage.local.set({ [PERSONAL_EVENTS_STORAGE_KEY]: validPes });
+      if (window.VITCM_DB?.savePersonalEvents) {
+        await window.VITCM_DB.savePersonalEvents(validPes);
+      }
     }
   }
 
-  const activeRecord = semestersMap[chosenSemId] || calData;
-  const days = activeRecord.days || calData.days || [];
-  const activeSemName = activeRecord.semesterName || calData.semesterName || "Latest Semester";
+  const personalTotalCount = (cachedPersonalEvents || []).length;
+  if (statPersonal) statPersonal.textContent = String(personalTotalCount);
+
+  if (semSelect) {
+    semSelect.innerHTML = `<option value="${escapeHtml(calData.semesterId)}" selected>${escapeHtml(activeSemName)} (Current)</option>`;
+    semSelect.value = calData.semesterId;
+  }
 
   // Normalize days: Working Saturdays & Day Orders are instructional working days, NEVER holidays
   days.forEach((d) => {
@@ -1949,6 +2272,7 @@ async function renderAcademicCalendarDashboard(activeFilter = currentCalendarFil
   if (statHol) statHol.textContent = String(holCount);
   if (statEve) statEve.textContent = String(eveCount);
   if (statDay) statDay.textContent = String(dayOrderCount);
+  if (statPersonal) statPersonal.textContent = String(personalTotalCount);
   if (daysCountEl) daysCountEl.textContent = String(days.length);
   if (statsBar) statsBar.style.display = "flex";
 
@@ -2028,13 +2352,16 @@ async function renderAcademicCalendarDashboard(activeFilter = currentCalendarFil
   // 2. Render Calendar List View
   const query = (searchQuery || "").trim().toLowerCase();
   const filteredDays = days.filter((d) => {
+    const dayPes = (cachedPersonalEvents || []).filter((e) => e.date === d.date);
     if (activeFilter === "working" && (!d.isInstructional && !d.instructional)) return false;
     if (activeFilter === "holidays" && !d.isHoliday) return false;
     if (activeFilter === "events" && !(d.isExam || d.isEvent || d.isFest)) return false;
     if (activeFilter === "dayorders" && !d.dayOrder) return false;
+    if (activeFilter === "personal" && dayPes.length === 0) return false;
 
     if (query) {
-      const haystack = `${d.date || ""} ${d.dayOfWeek || ""} ${d.eventDescription || ""} ${d.label || ""} ${d.instructionalStatus || ""} ${d.dayOrder || ""}`.toLowerCase();
+      const peHaystack = dayPes.map((p) => `${p.title} ${p.description || ""} ${p.category || ""}`).join(" ");
+      const haystack = `${d.date || ""} ${d.dayOfWeek || ""} ${d.eventDescription || ""} ${d.label || ""} ${d.instructionalStatus || ""} ${d.dayOrder || ""} ${peHaystack}`.toLowerCase();
       if (!haystack.includes(query)) return false;
     }
 
@@ -2092,6 +2419,16 @@ async function renderAcademicCalendarDashboard(activeFilter = currentCalendarFil
     } else {
       mainTitle = day.eventDescription || day.instructionalStatus || "Scheduled Day";
       subText = day.instructionalStatus || "";
+    }
+
+    // Include personal events badges
+    const dayPes = (cachedPersonalEvents || []).filter((e) => e.date === day.date);
+    if (dayPes.length > 0) {
+      cardClasses.push("has-personal");
+      dayPes.forEach((pe) => {
+        const catEmoji = pe.category === "assignment" ? "📝" : (pe.category === "exam" ? "⏰" : (pe.category === "reminder" ? "🔔" : (pe.category === "club" ? "👥" : "📌")));
+        badges.push(`<span class="cal-badge badge-${escapeHtml(pe.category || 'personal')}" title="${escapeHtml(pe.description || '')}">${catEmoji} ${escapeHtml(pe.title)}</span>`);
+      });
     }
 
     return `
@@ -2490,6 +2827,9 @@ document.addEventListener("DOMContentLoaded", async () => {
         renderStoredMarksDashboard();
       }
       if (changes[CALENDAR_STORAGE_KEY]) {
+        renderAcademicCalendarDashboard();
+      }
+      if (changes[PERSONAL_EVENTS_STORAGE_KEY]) {
         renderAcademicCalendarDashboard();
       }
     }
@@ -3028,10 +3368,7 @@ document.addEventListener("DOMContentLoaded", async () => {
           return;
         }
 
-        const semSelect = document.getElementById("calendarSemesterSelect");
-        const activeSemId = semSelect ? semSelect.value : (data.selectedSemesterId || data.semesterId);
-        const activeRecord = (data.semesters && data.semesters[activeSemId]) ? data.semesters[activeSemId] : data;
-
+        const activeRecord = data;
         const icsText = generateIcsCalendar(activeRecord);
         if (!icsText) {
           if (quickActionStatus) quickActionStatus.textContent = "Could not generate calendar events.";
@@ -3042,13 +3379,13 @@ document.addEventListener("DOMContentLoaded", async () => {
         const url = URL.createObjectURL(blob);
         const a = document.createElement("a");
         a.href = url;
-        const semClean = (activeRecord.semesterName || activeSemId || "sem").replace(/[^a-zA-Z0-9_-]/g, "_");
+        const semClean = (activeRecord.semesterName || activeRecord.semesterId || "current_sem").replace(/[^a-zA-Z0-9_-]/g, "_");
         a.download = `vit_calendar_${semClean}.ics`;
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
         URL.revokeObjectURL(url);
-        if (quickActionStatus) quickActionStatus.textContent = `📅 Exported phone calendar (.ics) for ${activeRecord.semesterName || "semester"}!`;
+        if (quickActionStatus) quickActionStatus.textContent = `📅 Exported phone calendar (.ics) for ${activeRecord.semesterName || "current semester"}!`;
       } catch (err) {
         if (quickActionStatus) quickActionStatus.textContent = `Export .ics failed: ${err.message || String(err)}`;
       }
@@ -3069,10 +3406,7 @@ document.addEventListener("DOMContentLoaded", async () => {
           return;
         }
 
-        const semSelect = document.getElementById("calendarSemesterSelect");
-        const activeSemId = semSelect ? semSelect.value : (data.selectedSemesterId || data.semesterId);
-        const activeRecord = (data.semesters && data.semesters[activeSemId]) ? data.semesters[activeSemId] : data;
-
+        const activeRecord = data;
         const htmlText = generateMobileHtmlCalendar(activeRecord);
         if (!htmlText) {
           if (quickActionStatus) quickActionStatus.textContent = "Could not generate mobile HTML calendar.";
@@ -3083,13 +3417,13 @@ document.addEventListener("DOMContentLoaded", async () => {
         const url = URL.createObjectURL(blob);
         const a = document.createElement("a");
         a.href = url;
-        const semClean = (activeRecord.semesterName || activeSemId || "sem").replace(/[^a-zA-Z0-9_-]/g, "_");
+        const semClean = (activeRecord.semesterName || activeRecord.semesterId || "current_sem").replace(/[^a-zA-Z0-9_-]/g, "_");
         a.download = `vit_academic_calendar_${semClean}.html`;
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
         URL.revokeObjectURL(url);
-        if (quickActionStatus) quickActionStatus.textContent = `📱 Exported mobile HTML calendar for ${activeRecord.semesterName || "semester"}!`;
+        if (quickActionStatus) quickActionStatus.textContent = `📱 Exported mobile HTML calendar for ${activeRecord.semesterName || "current semester"}!`;
       } catch (err) {
         if (quickActionStatus) quickActionStatus.textContent = `Export HTML failed: ${err.message || String(err)}`;
       }
@@ -3142,6 +3476,103 @@ document.addEventListener("DOMContentLoaded", async () => {
       } finally {
         if (syncCalendarIcon) syncCalendarIcon.classList.remove("spin");
         if (syncCalendarBtnText) syncCalendarBtnText.textContent = "Sync";
+      }
+    });
+  }
+
+  // --- Personal Events Listeners ---
+  const addPersonalEventBtn = document.getElementById("addPersonalEventBtn");
+  if (addPersonalEventBtn) {
+    addPersonalEventBtn.addEventListener("click", () => {
+      openPersonalEventModal(selectedDayDate || null);
+    });
+  }
+
+  const closeEventModalBtn = document.getElementById("closeEventModalBtn");
+  const cancelEventBtn = document.getElementById("cancelEventBtn");
+  const personalEventModal = document.getElementById("personalEventModal");
+
+  if (closeEventModalBtn) closeEventModalBtn.addEventListener("click", closePersonalEventModal);
+  if (cancelEventBtn) cancelEventBtn.addEventListener("click", closePersonalEventModal);
+  if (personalEventModal) {
+    personalEventModal.addEventListener("click", (e) => {
+      if (e.target === personalEventModal) {
+        closePersonalEventModal();
+      }
+    });
+  }
+
+  const personalEventForm = document.getElementById("personalEventForm");
+  if (personalEventForm) {
+    personalEventForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const idInput = document.getElementById("eventEditId");
+      const titleInput = document.getElementById("eventTitleInput");
+      const dateInput = document.getElementById("eventDateInput");
+      const catSelect = document.getElementById("eventCategorySelect");
+      const timeInput = document.getElementById("eventTimeInput");
+      const descInput = document.getElementById("eventDescInput");
+
+      const title = titleInput ? titleInput.value.trim() : "";
+      const date = dateInput ? dateInput.value.trim() : "";
+      if (!title || !date) return;
+
+      const activeRecord = getActiveCalendarRecord();
+      const semStart = activeRecord?.startDate || activeRecord?.days?.[0]?.date;
+      const semEnd = activeRecord?.endDate || activeRecord?.days?.[activeRecord?.days?.length - 1]?.date;
+      if (semStart && date < semStart) {
+        alert(`Personal event date (${date}) cannot be earlier than the current semester start date (${semStart}).`);
+        return;
+      }
+      if (semEnd && date > semEnd) {
+        alert(`Personal event date (${date}) cannot be after the current semester end date (${semEnd}).`);
+        return;
+      }
+
+      const eventPayload = {
+        id: idInput && idInput.value ? idInput.value : undefined,
+        title,
+        date,
+        category: catSelect ? catSelect.value : "personal",
+        time: timeInput ? timeInput.value.trim() : "",
+        description: descInput ? descInput.value.trim() : ""
+      };
+
+      await savePersonalEvent(eventPayload);
+      closePersonalEventModal();
+      selectedDayDate = date;
+      await renderAcademicCalendarDashboard();
+
+      if (quickActionStatus) {
+        quickActionStatus.textContent = `📌 Saved event "${title}" on ${date}!`;
+      }
+    });
+  }
+
+  const calendarSelectedDayDetail = document.getElementById("calendarSelectedDayDetail");
+  if (calendarSelectedDayDetail) {
+    calendarSelectedDayDetail.addEventListener("click", async (e) => {
+      const btn = e.target.closest("[data-action]");
+      if (!btn) return;
+      const action = btn.dataset.action;
+      if (action === "add-pe") {
+        const targetDate = btn.dataset.date || selectedDayDate;
+        openPersonalEventModal(targetDate);
+      } else if (action === "edit-pe") {
+        const id = btn.dataset.id;
+        const ev = (cachedPersonalEvents || []).find((p) => p.id === id);
+        if (ev) {
+          openPersonalEventModal(ev.date, ev);
+        }
+      } else if (action === "del-pe") {
+        const id = btn.dataset.id;
+        if (id) {
+          await deletePersonalEvent(id);
+          await renderAcademicCalendarDashboard();
+          if (quickActionStatus) {
+            quickActionStatus.textContent = "🗑️ Personal event deleted.";
+          }
+        }
       }
     });
   }
