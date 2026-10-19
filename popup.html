@@ -7,6 +7,7 @@
     <link rel="stylesheet" href="style.css" />
     <script src="crypto.js"></script>
     <script src="db.js"></script>
+    <script src="academic_calendar.js"></script>
     <script src="popup.js" defer></script>
   </head>
   <body>
@@ -118,6 +119,127 @@
           <div id="storedMarksPanel" class="stored-marks-panel" style="display: none;">
             <div id="storedMarksContainer">
               <p class="empty-marks-hint">Login to VTOP to automatically scrape and view your marks here.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="calendar-dashboard" aria-label="VTOP Academic Calendar">
+        <div class="calendar-card-header">
+          <div class="calendar-header-left">
+            <span class="calendar-header-icon">📅</span>
+            <div>
+              <div class="calendar-title-wrap">
+                <span class="calendar-title">Academic Calendar</span>
+                <span id="calendarSemBadge" class="calendar-badge" style="display: none;">Latest</span>
+              </div>
+              <p id="calendarLastUpdated" class="calendar-sub-text">Checking calendar...</p>
+            </div>
+          </div>
+          <button type="button" id="syncCalendarBtn" class="calendar-sync-btn" title="Sync / Check Academic Calendar from VTOP">
+            <span id="syncCalendarIcon" class="sync-icon">🔄</span> <span id="syncCalendarBtnText">Sync</span>
+          </button>
+        </div>
+
+        <div class="calendar-controls-container" id="calendarControlsBar">
+          <div class="calendar-semester-row">
+            <span class="calendar-semester-icon">🏛️</span>
+            <select id="calendarSemesterSelect" class="calendar-semester-select" title="Switch Calendar Semester">
+              <option value="">Latest General Semester</option>
+            </select>
+          </div>
+          <div class="calendar-actions-row">
+            <button type="button" id="exportIcsBtn" class="calendar-action-chip" title="Export universal .ics calendar to add holidays & events directly to phone calendar (iPhone/Android)">
+              📅 Export .ics (Phone)
+            </button>
+            <button type="button" id="exportMobileHtmlBtn" class="calendar-action-chip" title="Export mobile-friendly offline HTML calendar to open and view on phone">
+              📱 Export Mobile HTML
+            </button>
+          </div>
+        </div>
+
+        <div class="calendar-stats-bar" id="calendarStatsBar" style="display: none;">
+          <div class="calendar-stat-item" title="Instructional Days">
+            <span class="stat-icon">📚</span>
+            <span class="stat-label">Classes:</span>
+            <strong id="calStatInstructional">0</strong>
+          </div>
+          <div class="calendar-stat-item" title="Holidays & Sundays">
+            <span class="stat-icon">🏖️</span>
+            <span class="stat-label">Holidays:</span>
+            <strong id="calStatHolidays">0</strong>
+          </div>
+          <div class="calendar-stat-item" title="Exams & Important Events">
+            <span class="stat-icon">📝</span>
+            <span class="stat-label">Events:</span>
+            <strong id="calStatEvents">0</strong>
+          </div>
+          <div class="calendar-stat-item" title="Working Saturday Day Orders">
+            <span class="stat-icon">🔄</span>
+            <span class="stat-label">Day Orders:</span>
+            <strong id="calStatDayOrders">0</strong>
+          </div>
+        </div>
+
+        <div class="calendar-collapsible">
+          <button type="button" id="toggleCalendarBtn" class="calendar-accordion-btn">
+            <span>🗓️ View Calendar Days (<span id="calendarTotalDaysCount">0</span> days)</span>
+            <span id="calendarArrow" class="accordion-arrow">▼</span>
+          </button>
+          <div id="calendarPanel" class="calendar-panel" style="display: none;">
+            <div class="calendar-month-nav-bar">
+              <div class="cal-month-nav-left">
+                <button type="button" id="calPrevMonthBtn" class="cal-month-nav-arrow" title="Previous Month">◀</button>
+                <select id="calMonthSelect" class="cal-month-picker" title="Select Month">
+                  <option value="">Month</option>
+                </select>
+                <button type="button" id="calNextMonthBtn" class="cal-month-nav-arrow" title="Next Month">▶</button>
+              </div>
+              <div class="cal-view-switch">
+                <button type="button" id="calViewTableBtn" class="cal-view-toggle active" title="Monthly Calendar Table Grid">🗓️ Table</button>
+                <button type="button" id="calViewListBtn" class="cal-view-toggle" title="List View of Days">📑 List</button>
+              </div>
+            </div>
+
+            <!-- Calendar Table View (Default) -->
+            <div id="calendarTableView" class="calendar-table-view">
+              <div class="cal-table-responsive-wrapper">
+                <table class="calendar-month-table">
+                  <thead>
+                    <tr>
+                      <th class="col-sun" title="Sunday">SUN</th>
+                      <th title="Monday">MON</th>
+                      <th title="Tuesday">TUE</th>
+                      <th title="Wednesday">WED</th>
+                      <th title="Thursday">THU</th>
+                      <th title="Friday">FRI</th>
+                      <th class="col-sat" title="Saturday">SAT</th>
+                    </tr>
+                  </thead>
+                  <tbody id="calendarTableBody">
+                    <tr><td colspan="7" class="empty-calendar-hint">Loading calendar table...</td></tr>
+                  </tbody>
+                </table>
+              </div>
+              <div id="calendarSelectedDayDetail" class="cal-day-detail-box" style="display: none;"></div>
+            </div>
+
+            <!-- Calendar List View (Alternative with filters and search) -->
+            <div id="calendarListView" class="calendar-list-view" style="display: none;">
+              <div class="calendar-filter-bar">
+                <div class="calendar-tabs">
+                  <button type="button" class="cal-tab-btn active" data-cal-filter="all">All</button>
+                  <button type="button" class="cal-tab-btn" data-cal-filter="working">📚 Working</button>
+                  <button type="button" class="cal-tab-btn" data-cal-filter="holidays">🏖️ Holidays</button>
+                  <button type="button" class="cal-tab-btn" data-cal-filter="events">📝 Exams & Events</button>
+                  <button type="button" class="cal-tab-btn" data-cal-filter="dayorders">🔄 Day Orders</button>
+                </div>
+                <input type="text" id="calendarSearchInput" class="calendar-search-input" placeholder="🔍 Search event, holiday, date..." />
+              </div>
+
+              <div id="calendarDaysContainer" class="calendar-days-container">
+                <p class="empty-calendar-hint">Log in to VTOP or click Sync to extract the Academic Calendar.</p>
+              </div>
             </div>
           </div>
         </div>

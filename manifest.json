@@ -45,6 +45,7 @@
         "timetable.js",
         "db.js",
         "marks.js",
+        "academic_calendar.js",
         "attendance.js",
         "exam_schedule.js",
         "navbar.js",

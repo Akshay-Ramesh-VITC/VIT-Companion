@@ -341,6 +341,8 @@ async function injectContentScripts(tabId) {
       "crypto.js",
       "bitmaps.js",
       "captchaparser.js",
+      "db.js",
+      "academic_calendar.js",
       "content.js",
       "timetable.js",
       "marks.js",
@@ -751,6 +753,1365 @@ async function renderStoredMarksDashboard() {
   }
 }
 
+const CALENDAR_STORAGE_KEY = "vit_academic_calendar";
+let currentCalendarFilter = "all";
+let currentCalendarSearch = "";
+let cachedCalendarData = null;
+let currentCalendarMonth = null;
+let currentCalendarViewMode = "table";
+let selectedDayDate = null;
+
+function formatCalendarTimestamp(ts) {
+  if (!ts) return "Not synced yet";
+  const date = new Date(ts);
+  const now = new Date();
+  const diffSec = Math.floor((now.getTime() - date.getTime()) / 1000);
+  if (diffSec < 60) return "Just now";
+  if (diffSec < 3600) return `${Math.floor(diffSec / 60)}m ago`;
+  if (diffSec < 86400) return `Today at ${date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
+  return `${date.toLocaleDateString([], { month: "short", day: "numeric" })} at ${date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
+}
+
+function weekdayOf(dateStr) {
+  if (!dateStr) return "";
+  const d = new Date(dateStr + "T00:00:00Z");
+  if (isNaN(d.getTime())) return "";
+  const weekdays = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"];
+  return weekdays[d.getUTCDay()] || "";
+}
+
+function getActiveCalendarRecord() {
+  if (!cachedCalendarData) return null;
+  const semSelect = document.getElementById("calendarSemesterSelect");
+  const chosenSemId = semSelect?.value || cachedCalendarData.selectedSemesterId || cachedCalendarData.semesterId;
+  return (cachedCalendarData.semesters && cachedCalendarData.semesters[chosenSemId]) || cachedCalendarData;
+}
+
+function showCalendarDayDetail(day) {
+  const detailBox = document.getElementById("calendarSelectedDayDetail");
+  if (!detailBox) return;
+
+  if (!day) {
+    detailBox.style.display = "none";
+    return;
+  }
+
+  selectedDayDate = day.date;
+
+  const dateParts = (day.date || "").split("-").map(Number);
+  const dateObj = new Date(dateParts[0], dateParts[1] - 1, dateParts[2]);
+  const dateStrPretty = dateObj.toLocaleDateString("en-US", {
+    weekday: "long",
+    year: "numeric",
+    month: "long",
+    day: "numeric"
+  });
+
+  let badge = "";
+  if (day.isExam) {
+    badge = '<span class="cal-badge badge-exam">📝 Exam Day</span>';
+  } else if (day.dayOrder) {
+    badge = `<span class="cal-badge badge-dayorder">🔄 ${escapeHtml(day.dayOrder)} Day Order</span>`;
+  } else if (day.isHoliday) {
+    badge = '<span class="cal-badge badge-holiday">🏖️ Holiday</span>';
+  } else if (day.isFest) {
+    badge = '<span class="cal-badge badge-fest">🎉 College Fest</span>';
+  } else if (day.isInstructional || day.instructional) {
+    badge = '<span class="cal-badge badge-instructional">📚 Instructional Class Day</span>';
+  } else {
+    badge = '<span class="cal-badge">Non-Instructional</span>';
+  }
+
+  let desc = day.eventDescription || "";
+  if (!desc) {
+    if (day.dayOrder) desc = `Working Saturday following ${day.dayOrder} timetable schedule`;
+    else if (day.isHoliday) desc = day.isSunday ? "Sunday (Weekend Holiday)" : "Holiday / Non-Instructional Day";
+    else if (day.isInstructional || day.instructional) desc = "Regular instructional class schedule";
+    else desc = "Non-instructional day";
+  }
+
+  detailBox.style.display = "block";
+  detailBox.innerHTML = `
+    <div class="cal-detail-card">
+      <div class="cal-detail-top">
+        <strong>${escapeHtml(dateStrPretty)}</strong>
+        ${badge}
+      </div>
+      <div class="cal-detail-desc">${escapeHtml(desc)}</div>
+      <div class="cal-detail-sub">
+        <span>Status: <strong>${escapeHtml(day.instructionalStatus || (day.isInstructional ? "Instructional Day" : "Non-Instructional Day"))}</strong></span>
+        ${day.dayOrder ? `<span> · Timetable: <strong>${escapeHtml(day.dayOrder)} Day Order</strong></span>` : ""}
+      </div>
+    </div>
+  `;
+}
+
+function renderCalendarMonthTable(activeRecord, monthKey) {
+  const tbody = document.getElementById("calendarTableBody");
+  if (!tbody || !activeRecord) return;
+
+  const days = activeRecord.days || [];
+  if (!days.length) {
+    tbody.innerHTML = '<tr><td colspan="7" class="empty-calendar-hint">No calendar days available.</td></tr>';
+    return;
+  }
+
+  let year, month;
+  if (monthKey && monthKey.includes("-")) {
+    const parts = monthKey.split("-").map(Number);
+    year = parts[0];
+    month = parts[1];
+  } else {
+    const firstDate = days[0].date || "2026-10-01";
+    const parts = firstDate.split("-").map(Number);
+    year = parts[0];
+    month = parts[1];
+    monthKey = `${year}-${String(month).padStart(2, "0")}`;
+  }
+
+  const totalDays = new Date(year, month, 0).getDate();
+  const firstDayWeekday = new Date(year, month - 1, 1).getDay();
+
+  const monthDaysMap = new Map();
+  days.forEach((d) => {
+    if (d.date && d.date.startsWith(monthKey)) {
+      const dNum = parseInt(d.date.split("-")[2], 10);
+      monthDaysMap.set(dNum, d);
+    }
+  });
+
+  const todayStr = new Date().toISOString().slice(0, 10);
+  let rowsHtml = "";
+  let dayCounter = 1;
+  const weekdays = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"];
+
+  while (dayCounter <= totalDays) {
+    rowsHtml += "<tr>";
+    for (let col = 0; col < 7; col++) {
+      if (dayCounter === 1 && col < firstDayWeekday) {
+        rowsHtml += '<td class="cal-table-cell empty"></td>';
+      } else if (dayCounter > totalDays) {
+        rowsHtml += '<td class="cal-table-cell empty"></td>';
+      } else {
+        const dateStr = `${year}-${String(month).padStart(2, "0")}-${String(dayCounter).padStart(2, "0")}`;
+        const dayObj = monthDaysMap.get(dayCounter) || {
+          date: dateStr,
+          dayNumber: dayCounter,
+          dayOfWeek: weekdays[col],
+          isSunday: col === 0,
+          isHoliday: col === 0,
+          isInstructional: col !== 0 && col !== 6,
+          instructionalStatus: (col === 0 || col === 6) ? "Non-Instructional Day" : "Instructional Day"
+        };
+
+        const isToday = dateStr === todayStr;
+        let cellTypeClass = "";
+        let tagHtml = "";
+
+        if (dayObj.isExam) {
+          cellTypeClass = "cell-exam";
+          tagHtml = `<span class="cell-tag tag-exam" title="${escapeHtml(dayObj.eventDescription || 'Exam')}">📝 ${escapeHtml(dayObj.eventDescription || 'Exam')}</span>`;
+        } else if (dayObj.dayOrder) {
+          cellTypeClass = "cell-dayorder";
+          tagHtml = `<span class="cell-tag tag-dayorder" title="${escapeHtml(dayObj.dayOrder)} Day Order">🔄 ${escapeHtml(dayObj.dayOrder)} Order</span>`;
+        } else if (dayObj.isHoliday) {
+          cellTypeClass = "cell-holiday";
+          const holText = dayObj.eventDescription || (dayObj.isSunday ? "Sunday" : "Holiday");
+          tagHtml = `<span class="cell-tag tag-holiday" title="${escapeHtml(holText)}">🏖️ ${escapeHtml(holText)}</span>`;
+        } else if (dayObj.isFest) {
+          cellTypeClass = "cell-fest";
+          tagHtml = `<span class="cell-tag tag-fest" title="${escapeHtml(dayObj.eventDescription || 'Fest')}">🎉 ${escapeHtml(dayObj.eventDescription || 'Fest')}</span>`;
+        } else if (dayObj.isInstructional || dayObj.instructional) {
+          cellTypeClass = "cell-class";
+          tagHtml = '<span class="cell-dot-class">● Class</span>';
+        } else {
+          tagHtml = '<span class="cell-empty-label">Off</span>';
+        }
+
+        const todayPill = isToday ? '<span class="cell-today-pill">TODAY</span>' : "";
+        const isSelected = selectedDayDate === dateStr ? "selected-cell" : "";
+
+        rowsHtml += `
+          <td class="cal-table-cell ${cellTypeClass} ${isToday ? 'cell-today' : ''} ${isSelected}" data-date="${escapeHtml(dateStr)}">
+            <div class="cell-top-row">
+              <span class="cell-num">${dayCounter}</span>
+              ${todayPill}
+            </div>
+            <div class="cell-body">
+              ${tagHtml}
+            </div>
+          </td>
+        `;
+        dayCounter++;
+      }
+    }
+    rowsHtml += "</tr>";
+  }
+
+  tbody.innerHTML = rowsHtml;
+}
+
+function generateIcsCalendar(calData) {
+  if (!calData || !Array.isArray(calData.days) || calData.days.length === 0) {
+    return null;
+  }
+
+  const escapeIcs = (str) => {
+    if (!str) return "";
+    return String(str)
+      .replace(/\\/g, "\\\\")
+      .replace(/;/g, "\\;")
+      .replace(/,/g, "\\,")
+      .replace(/\r?\n/g, "\\n");
+  };
+
+  const getNextDateIcs = (dateStr) => {
+    const parts = (dateStr || "").split("-").map(Number);
+    if (parts.length < 3 || isNaN(parts[0])) return "";
+    const dt = new Date(Date.UTC(parts[0], parts[1] - 1, parts[2] + 1));
+    const ny = dt.getUTCFullYear();
+    const nm = String(dt.getUTCMonth() + 1).padStart(2, "0");
+    const nd = String(dt.getUTCDate()).padStart(2, "0");
+    return `${ny}${nm}${nd}`;
+  };
+
+  const formatIcsDate = (dateStr) => (dateStr || "").replace(/-/g, "");
+  const nowUtc = new Date().toISOString().replace(/[-:]/g, "").split(".")[0] + "Z";
+  const semName = calData.semesterName || "VIT Academic Calendar";
+  const semId = calData.semesterId || "sem";
+
+  const lines = [
+    "BEGIN:VCALENDAR",
+    "VERSION:2.0",
+    "PRODID:-//VIT Companion//Academic Calendar//EN",
+    "CALSCALE:GREGORIAN",
+    "METHOD:PUBLISH",
+    `X-WR-CALNAME:${escapeIcs(`VIT Calendar - ${semName}`)}`,
+    "X-WR-TIMEZONE:Asia/Kolkata",
+    "BEGIN:VTIMEZONE",
+    "TZID:Asia/Kolkata",
+    "X-LIC-LOCATION:Asia/Kolkata",
+    "BEGIN:STANDARD",
+    "TZOFFSETFROM:+0530",
+    "TZOFFSETTO:+0530",
+    "TZNAME:IST",
+    "DTSTART:19700101T000000",
+    "END:STANDARD",
+    "END:VTIMEZONE"
+  ];
+
+  calData.days.forEach((d) => {
+    if (d.dayOrder || /day\s*order|working\s*saturday/i.test(`${d.eventDescription || ""} ${d.label || ""}`)) {
+      d.isHoliday = false;
+      d.isInstructional = true;
+      d.instructional = true;
+      d.instructionalStatus = "Instructional Day";
+    }
+  });
+
+  const events = calData.days.filter((d) =>
+    d.isHoliday || d.isExam || d.isEvent || d.isFest || d.dayOrder || (d.eventDescription && d.eventDescription.trim())
+  );
+
+  events.forEach((day, idx) => {
+    const dtStart = formatIcsDate(day.date);
+    const dtEnd = getNextDateIcs(day.date);
+    if (!dtStart || !dtEnd) return;
+
+    let summary = "";
+    const descLines = [];
+
+    if (day.isExam) {
+      summary = `📝 ${day.eventDescription || "Examination"}`;
+      descLines.push(`VIT Examination: ${day.eventDescription || "Exam"}`);
+      descLines.push(`Status: ${day.instructionalStatus || "Instructional Day"}`);
+    } else if (day.dayOrder) {
+      summary = `🔄 ${day.dayOrder} Day Order (Working Saturday)`;
+      descLines.push(`Timetable: ${day.dayOrder} Day Order`);
+      descLines.push(`Status: ${day.instructionalStatus || "Instructional Day"}`);
+      if (day.eventDescription) descLines.push(`Note: ${day.eventDescription}`);
+    } else if (day.isHoliday) {
+      const holidayName = day.eventDescription || (day.isSunday ? "Sunday" : "Holiday / Non-Instructional");
+      summary = `🏖️ Holiday: ${holidayName}`;
+      descLines.push(`VIT Holiday: ${holidayName}`);
+      descLines.push(`Status: ${day.instructionalStatus || "Non-Instructional Day"}`);
+    } else if (day.isFest) {
+      summary = `🎉 ${day.eventDescription || "College Fest"}`;
+      descLines.push(`College Event / Fest: ${day.eventDescription || ""}`);
+    } else {
+      summary = `📌 ${day.eventDescription || day.instructionalStatus || "Academic Day"}`;
+      descLines.push(`${day.eventDescription || day.instructionalStatus || ""}`);
+    }
+
+    descLines.push(`Semester: ${semName}`);
+    descLines.push(`Exported by VIT Companion`);
+
+    const uid = `vitcal-${semId}-${day.date}-${idx}@vitcompanion`;
+
+    lines.push("BEGIN:VEVENT");
+    lines.push(`UID:${uid}`);
+    lines.push(`DTSTAMP:${nowUtc}`);
+    lines.push(`DTSTART;VALUE=DATE:${dtStart}`);
+    lines.push(`DTEND;VALUE=DATE:${dtEnd}`);
+    lines.push(`SUMMARY:${escapeIcs(summary)}`);
+    lines.push(`DESCRIPTION:${escapeIcs(descLines.join("\n"))}`);
+    lines.push("LOCATION:Vellore Institute of Technology");
+    lines.push("STATUS:CONFIRMED");
+    lines.push("TRANSP:TRANSPARENT");
+    lines.push("END:VEVENT");
+  });
+
+  lines.push("END:VCALENDAR");
+  return lines.join("\r\n");
+}
+
+function generateMobileHtmlCalendar(calData) {
+  if (!calData || !Array.isArray(calData.days) || calData.days.length === 0) {
+    return null;
+  }
+
+  const semName = calData.semesterName || "VIT Academic Calendar";
+  const days = calData.days;
+  const icsString = generateIcsCalendar(calData) || "";
+  const icsDataUri = "data:text/calendar;charset=utf-8," + encodeURIComponent(icsString);
+
+  const monthsMap = new Map();
+  const monthNames = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+
+  days.forEach((d) => {
+    if (d.dayOrder || /day\s*order|working\s*saturday/i.test(`${d.eventDescription || ""} ${d.label || ""}`)) {
+      d.isHoliday = false;
+      d.isInstructional = true;
+      d.instructional = true;
+      d.instructionalStatus = "Instructional Day";
+      d.category = "dayorder";
+    }
+    const parts = (d.date || "").split("-");
+    const y = parts[0] || "";
+    const m = parseInt(parts[1] || "1", 10);
+    const mKey = `${y}-${String(m).padStart(2, "0")}`;
+    const mTitle = `${monthNames[m - 1] || "Month"} ${y}`;
+    if (!monthsMap.has(mKey)) {
+      monthsMap.set(mKey, { title: mTitle, days: [] });
+    }
+    monthsMap.get(mKey).days.push(d);
+  });
+
+  const instructionalCount = days.filter((d) => d.isInstructional || d.instructional).length;
+  const holidaysCount = days.filter((d) => d.isHoliday).length;
+  const eventsCount = days.filter((d) => d.isExam || d.isEvent || d.isFest).length;
+  const dayOrdersCount = days.filter((d) => Boolean(d.dayOrder)).length;
+
+  let monthsHtml = "";
+  for (const [mKey, mGroup] of monthsMap.entries()) {
+    const mHolidays = mGroup.days.filter((d) => d.isHoliday).length;
+    const mClasses = mGroup.days.filter((d) => d.isInstructional || d.instructional).length;
+
+    const [yStr, mStr] = mKey.split("-");
+    const yNum = parseInt(yStr, 10);
+    const mNum = parseInt(mStr, 10);
+    const totalDays = new Date(yNum, mNum, 0).getDate();
+    const firstDayWeekday = new Date(yNum, mNum - 1, 1).getDay();
+
+    const monthDaysMap = new Map();
+    mGroup.days.forEach((d) => {
+      const parts = (d.date || "").split("-");
+      const dNum = parseInt(parts[2] || "0", 10);
+      if (dNum > 0) monthDaysMap.set(dNum, d);
+    });
+
+    const weekdays = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"];
+    let monthTableRows = "";
+    let dayCounter = 1;
+
+    while (dayCounter <= totalDays) {
+      monthTableRows += "<tr>";
+      for (let col = 0; col < 7; col++) {
+        if (dayCounter === 1 && col < firstDayWeekday) {
+          monthTableRows += '<td class="mob-cell empty"></td>';
+        } else if (dayCounter > totalDays) {
+          monthTableRows += '<td class="mob-cell empty"></td>';
+        } else {
+          const dateStr = `${yNum}-${String(mNum).padStart(2, "0")}-${String(dayCounter).padStart(2, "0")}`;
+          const day = monthDaysMap.get(dayCounter) || {
+            date: dateStr,
+            dayNumber: dayCounter,
+            dayOfWeek: weekdays[col],
+            isSunday: col === 0,
+            isHoliday: col === 0,
+            isInstructional: col !== 0 && col !== 6,
+            instructionalStatus: (col === 0 || col === 6) ? "Non-Instructional Day" : "Instructional Day"
+          };
+
+          let cellType = "cell-regular";
+          let chip = "";
+          let badgeText = "";
+          let descText = day.eventDescription || "";
+
+          if (day.isExam) {
+            cellType = "cell-exam";
+            chip = `<span class="mob-chip chip-exam" title="${escapeHtml(descText || 'Exam')}">📝 ${escapeHtml(descText || 'Exam')}</span>`;
+            badgeText = "📝 Exam";
+          } else if (day.dayOrder) {
+            cellType = "cell-dayorder";
+            chip = `<span class="mob-chip chip-dayorder" title="${escapeHtml(day.dayOrder)} Day Order">🔄 ${escapeHtml(day.dayOrder)} Order</span>`;
+            badgeText = `🔄 ${escapeHtml(day.dayOrder)} Day Order`;
+            if (!descText) descText = `Working Saturday (${day.dayOrder} Day Order)`;
+          } else if (day.isHoliday) {
+            cellType = "cell-holiday";
+            const hText = descText || (day.isSunday ? "Sunday" : "Holiday");
+            chip = `<span class="mob-chip chip-holiday" title="${escapeHtml(hText)}">🏖️ ${escapeHtml(hText)}</span>`;
+            badgeText = "🏖️ Holiday";
+          } else if (day.isFest) {
+            cellType = "cell-fest";
+            chip = `<span class="mob-chip chip-fest" title="${escapeHtml(descText || 'Fest')}">🎉 ${escapeHtml(descText || 'Fest')}</span>`;
+            badgeText = "🎉 Fest";
+          } else if (day.isInstructional || day.instructional) {
+            cellType = "cell-class";
+            chip = '<span class="mob-dot-class">● Class</span>';
+            badgeText = "📚 Class Day";
+          }
+
+          monthTableRows += `
+            <td class="mob-cell ${cellType}" data-date="${escapeHtml(dateStr)}" data-day="${dayCounter}" data-title="${escapeHtml(descText || badgeText || 'Day ' + dayCounter)}" data-status="${escapeHtml(day.instructionalStatus || '')}" data-badge="${escapeHtml(badgeText)}" data-dayorder="${escapeHtml(day.dayOrder || '')}">
+              <div class="mob-cell-top">
+                <span class="mob-cell-num">${dayCounter}</span>
+              </div>
+              <div class="mob-cell-body">
+                ${chip}
+              </div>
+            </td>
+          `;
+          dayCounter++;
+        }
+      }
+      monthTableRows += "</tr>";
+    }
+
+    let daysInMonthHtml = "";
+    mGroup.days.forEach((day) => {
+      const parts = (day.date || "").split("-");
+      const dayNum = parts[2] || "01";
+      const wk = (day.dayOfWeek || "").toUpperCase();
+
+      let cardType = "type-general";
+      let badgeHtml = "";
+      let titleText = "";
+      const subText = day.instructionalStatus || "";
+
+      if (day.isExam) {
+        cardType = "type-exam";
+        badgeHtml = `<span class="badge badge-exam">📝 Exam</span>`;
+        titleText = day.eventDescription || "Examination";
+      } else if (day.dayOrder) {
+        cardType = "type-dayorder";
+        badgeHtml = `<span class="badge badge-dayorder">🔄 ${escapeHtml(day.dayOrder)} Order</span>`;
+        titleText = day.eventDescription || `Working Saturday (${day.dayOrder} Day Order)`;
+      } else if (day.isHoliday) {
+        cardType = "type-holiday";
+        badgeHtml = `<span class="badge badge-holiday">🏖️ Holiday</span>`;
+        titleText = day.eventDescription || (day.isSunday ? "Sunday" : "Holiday");
+      } else if (day.isFest) {
+        cardType = "type-fest";
+        badgeHtml = `<span class="badge badge-fest">🎉 Fest</span>`;
+        titleText = day.eventDescription || "College Event";
+      } else if (day.isInstructional) {
+        cardType = "type-class";
+        badgeHtml = `<span class="badge badge-class">📚 Class</span>`;
+        titleText = day.eventDescription || "Instructional Day";
+      } else {
+        titleText = day.eventDescription || day.instructionalStatus || "Scheduled Day";
+      }
+
+      daysInMonthHtml += `
+        <div class="day-card ${cardType}" data-type="${cardType}" data-search="${escapeHtml((day.date + " " + wk + " " + titleText + " " + subText).toLowerCase())}">
+          <div class="date-col">
+            <span class="date-num">${escapeHtml(dayNum)}</span>
+            <span class="date-wk">${escapeHtml(wk)}</span>
+          </div>
+          <div class="info-col">
+            <div class="day-header">
+              <span class="day-title">${escapeHtml(titleText)}</span>
+              ${badgeHtml}
+            </div>
+            ${subText ? `<span class="day-sub">${escapeHtml(subText)}</span>` : ""}
+          </div>
+        </div>
+      `;
+    });
+
+    monthsHtml += `
+      <section class="month-section" id="month-${escapeHtml(mKey)}">
+        <div class="month-header" onclick="this.parentElement.classList.toggle('collapsed')">
+          <span class="month-title">📅 ${escapeHtml(mGroup.title)}</span>
+          <span class="month-meta">${mClasses} Classes · ${mHolidays} Holidays <span class="arrow">▼</span></span>
+        </div>
+        <div class="month-body">
+          <div class="mob-table-container">
+            <div class="mob-table-wrapper">
+              <table class="mob-month-table">
+                <thead>
+                  <tr>
+                    <th class="col-sun">SUN</th>
+                    <th>MON</th>
+                    <th>TUE</th>
+                    <th>WED</th>
+                    <th>THU</th>
+                    <th>FRI</th>
+                    <th class="col-sat">SAT</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${monthTableRows}
+                </tbody>
+              </table>
+            </div>
+          </div>
+          <div class="days-list" style="display: none;">
+            ${daysInMonthHtml}
+          </div>
+        </div>
+      </section>
+    `;
+  }
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>VIT Academic Calendar - ${escapeHtml(semName)}</title>
+  <style>
+    :root {
+      --bg: #090d16;
+      --card: #131c2e;
+      --card-border: #1e293b;
+      --text: #f1f5f9;
+      --muted: #94a3b8;
+      --holiday: #ef4444;
+      --holiday-bg: rgba(239, 68, 68, 0.12);
+      --exam: #a855f7;
+      --exam-bg: rgba(168, 85, 247, 0.14);
+      --dayorder: #38bdf8;
+      --dayorder-bg: rgba(56, 189, 248, 0.14);
+      --class: #22c55e;
+      --class-bg: rgba(34, 197, 94, 0.12);
+      --primary: #f59e0b;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      padding: 12px;
+      line-height: 1.4;
+      -webkit-font-smoothing: antialiased;
+    }
+    header {
+      background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
+      border: 1px solid var(--card-border);
+      border-radius: 14px;
+      padding: 16px;
+      margin-bottom: 12px;
+    }
+    .header-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 10px;
+      margin-bottom: 8px;
+    }
+    h1 { font-size: 18px; font-weight: 700; color: #fff; }
+    .sem-badge {
+      display: inline-block;
+      background: rgba(245, 158, 11, 0.2);
+      border: 1px solid rgba(245, 158, 11, 0.5);
+      color: #fbbf24;
+      font-size: 11px;
+      font-weight: 700;
+      padding: 3px 8px;
+      border-radius: 20px;
+      margin-top: 4px;
+    }
+    .actions-bar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 12px;
+    }
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 8px 12px;
+      border-radius: 8px;
+      font-size: 12px;
+      font-weight: 600;
+      text-decoration: none;
+      cursor: pointer;
+      border: none;
+      transition: opacity 0.15s ease;
+    }
+    .btn:hover { opacity: 0.9; }
+    .btn-ics {
+      background: #2563eb;
+      color: #fff;
+    }
+    .btn-print {
+      background: #334155;
+      color: #e2e8f0;
+    }
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+    @media (min-width: 500px) {
+      .stats-grid { grid-template-columns: repeat(4, 1fr); }
+    }
+    .stat-chip {
+      background: var(--card);
+      border: 1px solid var(--card-border);
+      border-radius: 10px;
+      padding: 10px;
+      text-align: center;
+    }
+    .stat-chip .val { font-size: 18px; font-weight: 700; color: #fff; display: block; }
+    .stat-chip .lbl { font-size: 11px; color: var(--muted); }
+    .filter-sticky {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: var(--bg);
+      padding: 8px 0;
+      margin-bottom: 10px;
+    }
+    .view-switch-row {
+      display: flex;
+      gap: 6px;
+      margin-bottom: 8px;
+    }
+    .view-btn {
+      flex: 1;
+      background: var(--card);
+      border: 1px solid var(--card-border);
+      border-radius: 8px;
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 700;
+      padding: 7px 10px;
+      cursor: pointer;
+      text-align: center;
+      transition: all 0.15s ease;
+    }
+    .view-btn.active {
+      background: rgba(245, 158, 11, 0.25);
+      border-color: rgba(245, 158, 11, 0.5);
+      color: #fbbf24;
+    }
+    .search-box {
+      width: 100%;
+      background: var(--card);
+      border: 1px solid var(--card-border);
+      border-radius: 8px;
+      padding: 8px 12px;
+      color: #fff;
+      font-size: 13px;
+      outline: none;
+      margin-bottom: 8px;
+    }
+    .search-box:focus { border-color: var(--primary); }
+    .tabs-bar {
+      display: flex;
+      gap: 6px;
+      overflow-x: auto;
+      padding-bottom: 4px;
+    }
+    .tab-btn {
+      background: var(--card);
+      border: 1px solid var(--card-border);
+      border-radius: 20px;
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 600;
+      padding: 5px 12px;
+      white-space: nowrap;
+      cursor: pointer;
+    }
+    .tab-btn.active {
+      background: rgba(245, 158, 11, 0.25);
+      border-color: rgba(245, 158, 11, 0.5);
+      color: #fbbf24;
+    }
+    /* Mobile Table Grid */
+    .mob-table-container {
+      width: 100%;
+    }
+    .mob-table-wrapper {
+      width: 100%;
+      overflow-x: auto;
+      border: 1px solid var(--card-border);
+      border-radius: 10px;
+      background: rgba(0, 0, 0, 0.25);
+      margin-bottom: 8px;
+    }
+    .mob-month-table {
+      width: 100%;
+      border-collapse: collapse;
+      table-layout: fixed;
+      font-size: 10px;
+    }
+    .mob-month-table th {
+      background: #1e293b;
+      color: #94a3b8;
+      font-size: 9px;
+      font-weight: 700;
+      text-align: center;
+      padding: 6px 2px;
+      border-bottom: 1px solid var(--card-border);
+    }
+    .mob-month-table th.col-sun { color: #f87171; }
+    .mob-month-table th.col-sat { color: #38bdf8; }
+    .mob-cell {
+      border: 1px solid rgba(255, 255, 255, 0.05);
+      vertical-align: top;
+      height: 48px;
+      padding: 3px;
+      box-sizing: border-box;
+      position: relative;
+      cursor: pointer;
+      -webkit-tap-highlight-color: transparent;
+      transition: background 0.15s ease;
+    }
+    .mob-cell:hover, .mob-cell:active {
+      background: rgba(255, 255, 255, 0.08);
+    }
+    .mob-cell.empty {
+      background: rgba(0, 0, 0, 0.2);
+      cursor: default;
+    }
+    .mob-cell.cell-holiday {
+      background: var(--holiday-bg);
+      border-color: rgba(239, 68, 68, 0.35);
+    }
+    .mob-cell.cell-dayorder {
+      background: var(--dayorder-bg);
+      border-color: rgba(56, 189, 248, 0.4);
+    }
+    .mob-cell.cell-exam {
+      background: var(--exam-bg);
+      border-color: rgba(168, 85, 247, 0.4);
+    }
+    .mob-cell.cell-fest {
+      background: rgba(236, 72, 153, 0.12);
+      border-color: rgba(236, 72, 153, 0.35);
+    }
+    .mob-cell.cell-class {
+      background: rgba(255, 255, 255, 0.02);
+    }
+    .mob-cell.selected-cell {
+      box-shadow: inset 0 0 0 2px #38bdf8;
+    }
+    .mob-cell-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 2px;
+    }
+    .mob-cell-num {
+      font-size: 11px;
+      font-weight: 700;
+      color: #fff;
+      line-height: 1;
+    }
+    .mob-cell-body {
+      display: flex;
+      flex-direction: column;
+      gap: 1px;
+      overflow: hidden;
+    }
+    .mob-chip {
+      font-size: 8px;
+      font-weight: 700;
+      padding: 1px 3px;
+      border-radius: 3px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      display: block;
+      line-height: 1.1;
+    }
+    .chip-holiday { background: rgba(239, 68, 68, 0.25); color: #fca5a5; }
+    .chip-dayorder { background: rgba(56, 189, 248, 0.25); color: #93c5fd; }
+    .chip-exam { background: rgba(168, 85, 247, 0.25); color: #d8b4fe; }
+    .chip-fest { background: rgba(236, 72, 153, 0.25); color: #f472b6; }
+    .mob-dot-class { color: #4ade80; font-size: 8px; opacity: 0.7; }
+    .mob-detail-box {
+      background: #1e293b;
+      border: 1px solid rgba(56, 189, 248, 0.5);
+      border-radius: 12px;
+      padding: 10px 14px;
+      margin-bottom: 12px;
+      box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
+    }
+    .mob-detail-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      margin-bottom: 4px;
+    }
+    .mob-detail-desc {
+      font-size: 13px;
+      font-weight: 600;
+      color: #fbbf24;
+      margin-bottom: 2px;
+    }
+    .mob-detail-sub {
+      font-size: 11px;
+      color: var(--muted);
+    }
+    .mob-detail-close {
+      background: none;
+      border: none;
+      color: #94a3b8;
+      font-size: 14px;
+      cursor: pointer;
+      padding: 0 4px;
+    }
+    .month-section {
+      margin-bottom: 14px;
+    }
+    .month-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: #1e293b;
+      padding: 10px 14px;
+      border-radius: 10px;
+      margin-bottom: 6px;
+      cursor: pointer;
+      user-select: none;
+    }
+    .month-title { font-size: 13px; font-weight: 700; color: #fff; }
+    .month-meta { font-size: 11px; color: var(--muted); display: flex; align-items: center; gap: 6px; }
+    .month-header .arrow { font-size: 9px; transition: transform 0.2s ease; }
+    .month-section.collapsed .month-body { display: none; }
+    .month-section.collapsed .arrow { transform: rotate(-90deg); }
+    .days-list {
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+    }
+    .day-card {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      background: var(--card);
+      border: 1px solid var(--card-border);
+      border-radius: 10px;
+      padding: 8px 12px;
+    }
+    .day-card.type-holiday {
+      background: var(--holiday-bg);
+      border-color: rgba(239, 68, 68, 0.4);
+    }
+    .day-card.type-exam {
+      background: var(--exam-bg);
+      border-color: rgba(168, 85, 247, 0.45);
+    }
+    .day-card.type-dayorder {
+      background: var(--dayorder-bg);
+      border-color: rgba(56, 189, 248, 0.4);
+    }
+    .date-col {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-width: 36px;
+      background: rgba(0, 0, 0, 0.3);
+      padding: 4px;
+      border-radius: 6px;
+    }
+    .date-num { font-size: 15px; font-weight: 700; line-height: 1; color: #fff; }
+    .date-wk { font-size: 9px; font-weight: 600; color: var(--muted); text-transform: uppercase; margin-top: 2px; }
+    .info-col { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+    .day-header { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+    .day-title { font-size: 12px; font-weight: 600; color: #fff; }
+    .day-sub { font-size: 10px; color: var(--muted); }
+    .badge {
+      font-size: 9px;
+      font-weight: 700;
+      padding: 1px 6px;
+      border-radius: 4px;
+      display: inline-flex;
+      align-items: center;
+    }
+    .badge-holiday { background: rgba(239, 68, 68, 0.25); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.4); }
+    .badge-exam { background: rgba(168, 85, 247, 0.25); color: #c084fc; border: 1px solid rgba(168, 85, 247, 0.45); }
+    .badge-dayorder { background: rgba(56, 189, 248, 0.25); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.4); }
+    .badge-fest { background: rgba(236, 72, 153, 0.25); color: #f472b6; border: 1px solid rgba(236, 72, 153, 0.4); }
+    .badge-class { background: rgba(34, 197, 94, 0.2); color: #4ade80; border: 1px solid rgba(34, 197, 94, 0.3); }
+    .hidden { display: none !important; }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="header-top">
+      <div>
+        <h1>🗓️ VIT Academic Calendar</h1>
+        <div class="sem-badge">${escapeHtml(semName)}</div>
+      </div>
+    </div>
+    <div class="actions-bar">
+      <a href="${icsDataUri}" download="vit_academic_calendar_${escapeHtml(calData.semesterId || "sem")}.ics" class="btn btn-ics">
+        📅 Add to Phone Calendar (.ics)
+      </a>
+      <button onclick="window.print()" class="btn btn-print">🖨️ Print / PDF</button>
+    </div>
+  </header>
+
+  <div class="stats-grid">
+    <div class="stat-chip">
+      <span class="val">${instructionalCount}</span>
+      <span class="lbl">📚 Classes</span>
+    </div>
+    <div class="stat-chip">
+      <span class="val">${holidaysCount}</span>
+      <span class="lbl">🏖️ Holidays</span>
+    </div>
+    <div class="stat-chip">
+      <span class="val">${eventsCount}</span>
+      <span class="lbl">📝 Exams & Events</span>
+    </div>
+    <div class="stat-chip">
+      <span class="val">${dayOrdersCount}</span>
+      <span class="lbl">🔄 Day Orders</span>
+    </div>
+  </div>
+
+  <div class="filter-sticky">
+    <div class="view-switch-row">
+      <button type="button" class="view-btn active" id="mobViewTableBtn">🗓️ Calendar Table</button>
+      <button type="button" class="view-btn" id="mobViewListBtn">📑 Detailed List</button>
+    </div>
+    <input type="text" id="mobileSearch" class="search-box" placeholder="🔍 Search event, holiday, day order, date..." />
+    <div class="tabs-bar">
+      <button class="tab-btn active" data-filter="all">All (${days.length})</button>
+      <button class="tab-btn" data-filter="type-holiday">🏖️ Holidays (${holidaysCount})</button>
+      <button class="tab-btn" data-filter="type-exam">📝 Exams (${eventsCount})</button>
+      <button class="tab-btn" data-filter="type-dayorder">🔄 Day Orders (${dayOrdersCount})</button>
+      <button class="tab-btn" data-filter="type-class">📚 Classes (${instructionalCount})</button>
+    </div>
+  </div>
+
+  <div id="mobDayDetailBox" class="mob-detail-box" style="display: none;">
+    <div class="mob-detail-header">
+      <strong id="mobDetailDate">Date</strong>
+      <span id="mobDetailBadge" class="badge">Badge</span>
+      <button type="button" class="mob-detail-close" onclick="document.getElementById('mobDayDetailBox').style.display='none'">✕</button>
+    </div>
+    <div id="mobDetailDesc" class="mob-detail-desc"></div>
+    <div id="mobDetailStatus" class="mob-detail-sub"></div>
+  </div>
+
+  <main id="calendarMonthsContainer">
+    ${monthsHtml}
+  </main>
+
+  <script>
+    (function() {
+      var currentFilter = 'all';
+      var currentSearch = '';
+      var currentView = 'table';
+      var tabs = document.querySelectorAll('.tab-btn');
+      var searchInput = document.getElementById('mobileSearch');
+      var monthSections = document.querySelectorAll('.month-section');
+      var viewTableBtn = document.getElementById('mobViewTableBtn');
+      var viewListBtn = document.getElementById('mobViewListBtn');
+      var detailBox = document.getElementById('mobDayDetailBox');
+      var detailDate = document.getElementById('mobDetailDate');
+      var detailBadge = document.getElementById('mobDetailBadge');
+      var detailDesc = document.getElementById('mobDetailDesc');
+      var detailStatus = document.getElementById('mobDetailStatus');
+
+      function setView(view) {
+        currentView = view;
+        if (view === 'table') {
+          if (viewTableBtn) viewTableBtn.classList.add('active');
+          if (viewListBtn) viewListBtn.classList.remove('active');
+          document.querySelectorAll('.mob-table-container').forEach(function(el) { el.style.display = 'block'; });
+          document.querySelectorAll('.days-list').forEach(function(el) { el.style.display = 'none'; });
+        } else {
+          if (viewListBtn) viewListBtn.classList.add('active');
+          if (viewTableBtn) viewTableBtn.classList.remove('active');
+          document.querySelectorAll('.mob-table-container').forEach(function(el) { el.style.display = 'none'; });
+          document.querySelectorAll('.days-list').forEach(function(el) { el.style.display = 'flex'; });
+        }
+      }
+
+      if (viewTableBtn) {
+        viewTableBtn.addEventListener('click', function() { setView('table'); });
+      }
+      if (viewListBtn) {
+        viewListBtn.addEventListener('click', function() { setView('list'); });
+      }
+
+      document.querySelectorAll('.mob-cell:not(.empty)').forEach(function(cell) {
+        cell.addEventListener('click', function() {
+          document.querySelectorAll('.mob-cell').forEach(function(c) { c.classList.remove('selected-cell'); });
+          cell.classList.add('selected-cell');
+          var date = cell.getAttribute('data-date');
+          var title = cell.getAttribute('data-title');
+          var status = cell.getAttribute('data-status');
+          var badge = cell.getAttribute('data-badge');
+          var dayOrder = cell.getAttribute('data-dayorder');
+
+          if (detailDate) detailDate.textContent = date;
+          if (detailBadge) {
+            detailBadge.textContent = badge || 'Scheduled';
+            var bClass = 'badge ';
+            if (cell.classList.contains('cell-holiday')) bClass += 'badge-holiday';
+            else if (cell.classList.contains('cell-dayorder')) bClass += 'badge-dayorder';
+            else if (cell.classList.contains('cell-exam')) bClass += 'badge-exam';
+            else if (cell.classList.contains('cell-fest')) bClass += 'badge-fest';
+            else bClass += 'badge-class';
+            detailBadge.className = bClass;
+          }
+          if (detailDesc) detailDesc.textContent = title;
+          if (detailStatus) {
+            var subParts = [];
+            if (status) subParts.push('Status: ' + status);
+            if (dayOrder) subParts.push('Timetable: ' + dayOrder + ' Day Order');
+            detailStatus.textContent = subParts.join(' · ');
+          }
+          if (detailBox) {
+            detailBox.style.display = 'block';
+            detailBox.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+          }
+        });
+      });
+
+      function applyFilter() {
+        var query = currentSearch.trim().toLowerCase();
+        if (query && currentView !== 'list') {
+          setView('list');
+        }
+
+        monthSections.forEach(function(sec) {
+          var cards = sec.querySelectorAll('.day-card');
+          var visibleInMonth = 0;
+          cards.forEach(function(card) {
+            var matchesType = (currentFilter === 'all') || card.classList.contains(currentFilter);
+            var matchesSearch = !query || card.getAttribute('data-search').indexOf(query) !== -1;
+            if (matchesType && matchesSearch) {
+              card.classList.remove('hidden');
+              visibleInMonth++;
+            } else {
+              card.classList.add('hidden');
+            }
+          });
+          if (visibleInMonth === 0 && query) {
+            sec.classList.add('hidden');
+          } else {
+            sec.classList.remove('hidden');
+          }
+        });
+      }
+
+      tabs.forEach(function(tab) {
+        tab.addEventListener('click', function() {
+          tabs.forEach(function(t) { t.classList.remove('active'); });
+          tab.classList.add('active');
+          currentFilter = tab.getAttribute('data-filter');
+          if (currentFilter !== 'all' && currentView !== 'list') {
+            setView('list');
+          }
+          applyFilter();
+        });
+      });
+
+      if (searchInput) {
+        searchInput.addEventListener('input', function(e) {
+          currentSearch = e.target.value || '';
+          applyFilter();
+        });
+      }
+    })();
+  <\/script>
+</body>
+</html>`;
+}
+
+async function renderAcademicCalendarDashboard(activeFilter = currentCalendarFilter, searchQuery = currentCalendarSearch) {
+  currentCalendarFilter = activeFilter;
+  currentCalendarSearch = searchQuery;
+
+  const lastUpdatedEl = document.getElementById("calendarLastUpdated");
+  const badgeEl = document.getElementById("calendarSemBadge");
+  const semSelect = document.getElementById("calendarSemesterSelect");
+  const statsBar = document.getElementById("calendarStatsBar");
+  const statInst = document.getElementById("calStatInstructional");
+  const statHol = document.getElementById("calStatHolidays");
+  const statEve = document.getElementById("calStatEvents");
+  const statDay = document.getElementById("calStatDayOrders");
+  const daysCountEl = document.getElementById("calendarTotalDaysCount");
+  const containerEl = document.getElementById("calendarDaysContainer");
+
+  if (!lastUpdatedEl) return;
+
+  const stored = await chrome.storage.local.get(CALENDAR_STORAGE_KEY);
+  let calData = stored[CALENDAR_STORAGE_KEY] || null;
+
+  if (!calData && window.VITCM_DB?.loadCalendarData) {
+    try {
+      calData = await window.VITCM_DB.loadCalendarData();
+      if (calData) {
+        await chrome.storage.local.set({ [CALENDAR_STORAGE_KEY]: calData });
+      }
+    } catch (_dbErr) {}
+  }
+
+  cachedCalendarData = calData;
+
+  if (!calData || !calData.days || calData.days.length === 0) {
+    lastUpdatedEl.textContent = "Not synced yet";
+    if (badgeEl) badgeEl.style.display = "none";
+    if (statsBar) statsBar.style.display = "none";
+    if (daysCountEl) daysCountEl.textContent = "0";
+    if (semSelect) semSelect.innerHTML = '<option value="">Latest General Semester</option>';
+    if (containerEl) {
+      containerEl.innerHTML = '<p class="empty-calendar-hint">Log in to VTOP or click Sync to extract the Academic Calendar.</p>';
+    }
+    return;
+  }
+
+  const availableSemesters = calData.availableSemesters || [];
+  const semestersMap = calData.semesters || {};
+  let chosenSemId = semSelect?.value || calData.selectedSemesterId || calData.semesterId;
+
+  if (semSelect) {
+    const semOptions = availableSemesters.length > 0
+      ? availableSemesters
+      : [{ id: calData.semesterId, name: calData.semesterName || calData.semesterId }];
+
+    semSelect.innerHTML = semOptions.map((s) => {
+      const isSelected = s.id === chosenSemId ? "selected" : "";
+      const isLatest = s.id === calData.semesterId;
+      const label = `${s.name}${isLatest ? " (Latest)" : ""}`;
+      return `<option value="${escapeHtml(s.id)}" ${isSelected}>${escapeHtml(label)}</option>`;
+    }).join("");
+
+    if (chosenSemId) {
+      semSelect.value = chosenSemId;
+    }
+  }
+
+  const activeRecord = semestersMap[chosenSemId] || calData;
+  const days = activeRecord.days || calData.days || [];
+  const activeSemName = activeRecord.semesterName || calData.semesterName || "Latest Semester";
+
+  // Normalize days: Working Saturdays & Day Orders are instructional working days, NEVER holidays
+  days.forEach((d) => {
+    const isWorkingSaturday = Boolean(d.dayOrder) || /day\s*order|working\s*saturday/i.test(`${d.eventDescription || ""} ${d.label || ""}`);
+    if (isWorkingSaturday) {
+      d.isHoliday = false;
+      d.isInstructional = true;
+      d.instructional = true;
+      d.instructionalStatus = "Instructional Day";
+      d.category = "dayorder";
+    }
+    if (d.isExam) {
+      d.isHoliday = false;
+      d.isInstructional = true;
+      d.instructional = true;
+    }
+    if (d.isInstructional === undefined) d.isInstructional = Boolean(d.instructional);
+    if (d.instructional === undefined) d.instructional = Boolean(d.isInstructional);
+    if (!d.dayOfWeek) d.dayOfWeek = d.weekday || weekdayOf(d.date);
+    if (!d.eventDescription) d.eventDescription = d.label || "";
+  });
+
+  lastUpdatedEl.textContent = `Last checked: ${formatCalendarTimestamp(calData.lastChecked || calData.lastUpdated)}`;
+  if (badgeEl) {
+    badgeEl.textContent = activeSemName;
+    badgeEl.style.display = "inline-block";
+  }
+
+  const instCount = days.filter((d) => d.isInstructional || d.instructional).length;
+  const holCount = days.filter((d) => d.isHoliday).length;
+  const eveCount = days.filter((d) => d.isExam || d.isEvent || d.isFest).length;
+  const dayOrderCount = days.filter((d) => Boolean(d.dayOrder)).length;
+
+  if (statInst) statInst.textContent = String(instCount);
+  if (statHol) statHol.textContent = String(holCount);
+  if (statEve) statEve.textContent = String(eveCount);
+  if (statDay) statDay.textContent = String(dayOrderCount);
+  if (daysCountEl) daysCountEl.textContent = String(days.length);
+  if (statsBar) statsBar.style.display = "flex";
+
+  // Month resolution for Table view
+  const monthNamesFull = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+  const availableMonths = [];
+  days.forEach((d) => {
+    if (d.date && d.date.length >= 7) {
+      const mKey = d.date.slice(0, 7);
+      if (!availableMonths.includes(mKey)) {
+        availableMonths.push(mKey);
+      }
+    }
+  });
+  availableMonths.sort();
+
+  const nowMonthKey = new Date().toISOString().slice(0, 7);
+  if (!currentCalendarMonth || !availableMonths.includes(currentCalendarMonth)) {
+    if (availableMonths.includes(nowMonthKey)) {
+      currentCalendarMonth = nowMonthKey;
+    } else {
+      currentCalendarMonth = availableMonths[0] || nowMonthKey;
+    }
+  }
+
+  const monthSelect = document.getElementById("calMonthSelect");
+  if (monthSelect) {
+    if (availableMonths.length > 0) {
+      monthSelect.innerHTML = availableMonths.map((mKey) => {
+        const parts = mKey.split("-").map(Number);
+        const label = `${monthNamesFull[(parts[1] || 1) - 1] || "Month"} ${parts[0]}`;
+        const isSel = mKey === currentCalendarMonth ? "selected" : "";
+        return `<option value="${escapeHtml(mKey)}" ${isSel}>${escapeHtml(label)}</option>`;
+      }).join("");
+      monthSelect.value = currentCalendarMonth;
+    } else {
+      monthSelect.innerHTML = '<option value="">No Months</option>';
+    }
+  }
+
+  // 1. Render Calendar Table View (Default)
+  renderCalendarMonthTable(activeRecord, currentCalendarMonth);
+
+  // Auto-inspect day detail
+  if (selectedDayDate) {
+    const sDay = days.find((d) => d.date === selectedDayDate);
+    if (sDay) showCalendarDayDetail(sDay);
+  } else {
+    const todayStr = new Date().toISOString().slice(0, 10);
+    const todayDay = days.find((d) => d.date === todayStr);
+    if (todayDay && todayDay.date.startsWith(currentCalendarMonth)) {
+      showCalendarDayDetail(todayDay);
+    } else {
+      const firstMonthDay = days.find((d) => d.date && d.date.startsWith(currentCalendarMonth) && (d.dayOrder || d.isHoliday || d.isExam));
+      if (firstMonthDay) showCalendarDayDetail(firstMonthDay);
+    }
+  }
+
+  // Toggle Table View vs List View
+  const tableView = document.getElementById("calendarTableView");
+  const listView = document.getElementById("calendarListView");
+  const tableToggle = document.getElementById("calViewTableBtn");
+  const listToggle = document.getElementById("calViewListBtn");
+
+  if (currentCalendarViewMode === "table") {
+    if (tableView) tableView.style.display = "block";
+    if (listView) listView.style.display = "none";
+    if (tableToggle) tableToggle.classList.add("active");
+    if (listToggle) listToggle.classList.remove("active");
+  } else {
+    if (tableView) tableView.style.display = "none";
+    if (listView) listView.style.display = "block";
+    if (tableToggle) tableToggle.classList.remove("active");
+    if (listToggle) listToggle.classList.add("active");
+  }
+
+  // 2. Render Calendar List View
+  const query = (searchQuery || "").trim().toLowerCase();
+  const filteredDays = days.filter((d) => {
+    if (activeFilter === "working" && (!d.isInstructional && !d.instructional)) return false;
+    if (activeFilter === "holidays" && !d.isHoliday) return false;
+    if (activeFilter === "events" && !(d.isExam || d.isEvent || d.isFest)) return false;
+    if (activeFilter === "dayorders" && !d.dayOrder) return false;
+
+    if (query) {
+      const haystack = `${d.date || ""} ${d.dayOfWeek || ""} ${d.eventDescription || ""} ${d.label || ""} ${d.instructionalStatus || ""} ${d.dayOrder || ""}`.toLowerCase();
+      if (!haystack.includes(query)) return false;
+    }
+
+    return true;
+  });
+
+  if (!containerEl) return;
+
+  if (filteredDays.length === 0) {
+    containerEl.innerHTML = '<p class="empty-calendar-hint">No matching days found.</p>';
+    return;
+  }
+
+  const monthNames = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"];
+
+  containerEl.innerHTML = filteredDays.map((day) => {
+    const parts = (day.date || "").split("-");
+    const moNum = parseInt(parts[1] || "1", 10);
+    const da = parts[2] || "01";
+    const moStr = monthNames[moNum - 1] || "";
+    const wk = (day.dayOfWeek || "").toUpperCase();
+
+    const cardClasses = ["cal-day-card"];
+    if (day.isHoliday) cardClasses.push("is-holiday");
+    if (day.isExam || day.isEvent || day.isFest) cardClasses.push("is-event");
+    if (day.dayOrder) cardClasses.push("is-dayorder");
+    if (!day.isHoliday && (day.isInstructional || day.instructional) && !day.isExam && !day.dayOrder) {
+      cardClasses.push("is-class");
+    }
+
+    const badges = [];
+    let mainTitle = "";
+    let subText = "";
+
+    if (day.isExam) {
+      badges.push('<span class="cal-badge badge-exam">📝 Exam</span>');
+      mainTitle = day.eventDescription || "Examination";
+      subText = day.instructionalStatus || "";
+    } else if (day.dayOrder) {
+      badges.push(`<span class="cal-badge badge-dayorder">🔄 ${escapeHtml(day.dayOrder)} Day Order</span>`);
+      mainTitle = day.eventDescription || `Working Saturday (${day.dayOrder} Day Order)`;
+      subText = day.instructionalStatus || "Instructional Day";
+    } else if (day.isHoliday) {
+      badges.push('<span class="cal-badge badge-holiday">🏖️ Holiday</span>');
+      mainTitle = day.eventDescription || (day.isSunday ? "Sunday" : "Holiday");
+      subText = day.instructionalStatus || "Holiday";
+    } else if (day.isFest) {
+      badges.push('<span class="cal-badge badge-fest">🎉 Fest</span>');
+      mainTitle = day.eventDescription || "College Fest";
+      subText = day.instructionalStatus || "";
+    } else if (day.isInstructional || day.instructional) {
+      badges.push('<span class="cal-badge badge-instructional">📚 Class</span>');
+      mainTitle = day.eventDescription || "Instructional Day";
+      subText = day.instructionalStatus || "Instructional Day";
+    } else {
+      mainTitle = day.eventDescription || day.instructionalStatus || "Scheduled Day";
+      subText = day.instructionalStatus || "";
+    }
+
+    return `
+      <div class="${cardClasses.join(" ")}" data-date="${escapeHtml(day.date)}">
+        <div class="cal-date-col">
+          <span class="cal-date-num">${escapeHtml(da)}</span>
+          <span class="cal-date-wk">${escapeHtml(moStr)} · ${escapeHtml(wk)}</span>
+        </div>
+        <div class="cal-info-col">
+          <div class="cal-day-header">
+            <span class="cal-day-title" title="${escapeHtml(mainTitle)}">${escapeHtml(mainTitle)}</span>
+            ${badges.join(" ")}
+          </div>
+          ${subText ? `<div class="cal-day-sub">${escapeHtml(subText)}</div>` : ""}
+        </div>
+      </div>
+    `;
+  }).join("");
+}
+
 document.addEventListener("DOMContentLoaded", async () => {
   const cards = Array.from(document.querySelectorAll(".site-card"));
   const hint = document.getElementById("activeSiteHint");
@@ -1120,9 +2481,17 @@ document.addEventListener("DOMContentLoaded", async () => {
   // --- Marks Dashboard Setup ---
   await renderStoredMarksDashboard();
 
+  // --- Academic Calendar Dashboard Setup ---
+  await renderAcademicCalendarDashboard();
+
   chrome.storage.onChanged.addListener((changes, area) => {
-    if (area === "local" && changes[MARKS_STORAGE_KEY]) {
-      renderStoredMarksDashboard();
+    if (area === "local") {
+      if (changes[MARKS_STORAGE_KEY]) {
+        renderStoredMarksDashboard();
+      }
+      if (changes[CALENDAR_STORAGE_KEY]) {
+        renderAcademicCalendarDashboard();
+      }
     }
   });
 
@@ -1496,6 +2865,283 @@ document.addEventListener("DOMContentLoaded", async () => {
       } finally {
         if (syncMarksIcon) syncMarksIcon.classList.remove("spin");
         if (syncMarksBtnText) syncMarksBtnText.textContent = "Sync";
+      }
+    });
+  }
+
+  // --- Academic Calendar Dashboard Event Listeners ---
+  const toggleCalendarBtn = document.getElementById("toggleCalendarBtn");
+  const calendarPanel = document.getElementById("calendarPanel");
+  const calendarArrow = document.getElementById("calendarArrow");
+
+  if (toggleCalendarBtn && calendarPanel) {
+    toggleCalendarBtn.addEventListener("click", () => {
+      const isHidden = calendarPanel.style.display === "none";
+      calendarPanel.style.display = isHidden ? "flex" : "none";
+      if (calendarArrow) {
+        if (isHidden) {
+          calendarArrow.classList.add("open");
+        } else {
+          calendarArrow.classList.remove("open");
+        }
+      }
+    });
+  }
+
+  const calPrevMonthBtn = document.getElementById("calPrevMonthBtn");
+  const calNextMonthBtn = document.getElementById("calNextMonthBtn");
+  const calMonthSelect = document.getElementById("calMonthSelect");
+
+  if (calPrevMonthBtn && calMonthSelect) {
+    calPrevMonthBtn.addEventListener("click", () => {
+      if (calMonthSelect.selectedIndex > 0) {
+        calMonthSelect.selectedIndex -= 1;
+        calMonthSelect.dispatchEvent(new Event("change"));
+      }
+    });
+  }
+
+  if (calNextMonthBtn && calMonthSelect) {
+    calNextMonthBtn.addEventListener("click", () => {
+      if (calMonthSelect.selectedIndex < calMonthSelect.options.length - 1) {
+        calMonthSelect.selectedIndex += 1;
+        calMonthSelect.dispatchEvent(new Event("change"));
+      }
+    });
+  }
+
+  if (calMonthSelect) {
+    calMonthSelect.addEventListener("change", () => {
+      currentCalendarMonth = calMonthSelect.value;
+      const activeRecord = getActiveCalendarRecord();
+      if (!activeRecord) return;
+      renderCalendarMonthTable(activeRecord, currentCalendarMonth);
+
+      const days = activeRecord.days || [];
+      const interestingDay = days.find((d) => d.date && d.date.startsWith(currentCalendarMonth) && (d.dayOrder || d.isHoliday || d.isExam)) ||
+                            days.find((d) => d.date && d.date.startsWith(currentCalendarMonth));
+      if (interestingDay) {
+        selectedDayDate = interestingDay.date;
+        showCalendarDayDetail(interestingDay);
+        const tbody = document.getElementById("calendarTableBody");
+        if (tbody) {
+          tbody.querySelectorAll(".cal-table-cell").forEach((c) => c.classList.remove("selected-cell"));
+          const targetCell = tbody.querySelector(`[data-date="${interestingDay.date}"]`);
+          if (targetCell) targetCell.classList.add("selected-cell");
+        }
+      } else {
+        const detailBox = document.getElementById("calendarSelectedDayDetail");
+        if (detailBox) detailBox.style.display = "none";
+      }
+    });
+  }
+
+  const calViewTableBtn = document.getElementById("calViewTableBtn");
+  const calViewListBtn = document.getElementById("calViewListBtn");
+  const calendarTableView = document.getElementById("calendarTableView");
+  const calendarListView = document.getElementById("calendarListView");
+
+  if (calViewTableBtn && calViewListBtn) {
+    calViewTableBtn.addEventListener("click", () => {
+      currentCalendarViewMode = "table";
+      calViewTableBtn.classList.add("active");
+      calViewListBtn.classList.remove("active");
+      if (calendarTableView) calendarTableView.style.display = "block";
+      if (calendarListView) calendarListView.style.display = "none";
+    });
+
+    calViewListBtn.addEventListener("click", () => {
+      currentCalendarViewMode = "list";
+      calViewListBtn.classList.add("active");
+      calViewTableBtn.classList.remove("active");
+      if (calendarTableView) calendarTableView.style.display = "none";
+      if (calendarListView) calendarListView.style.display = "block";
+    });
+  }
+
+  const calendarTableBody = document.getElementById("calendarTableBody");
+  if (calendarTableBody) {
+    calendarTableBody.addEventListener("click", (e) => {
+      const cell = e.target.closest(".cal-table-cell");
+      if (!cell || cell.classList.contains("empty")) return;
+      const dateStr = cell.dataset.date;
+      if (!dateStr) return;
+
+      selectedDayDate = dateStr;
+      calendarTableBody.querySelectorAll(".cal-table-cell").forEach((c) => c.classList.remove("selected-cell"));
+      cell.classList.add("selected-cell");
+
+      const activeRecord = getActiveCalendarRecord();
+      const days = activeRecord?.days || [];
+      const dayObj = days.find((d) => d.date === dateStr) || {
+        date: dateStr,
+        dayOfWeek: weekdayOf(dateStr),
+        eventDescription: "",
+        instructionalStatus: "Scheduled Day"
+      };
+      showCalendarDayDetail(dayObj);
+    });
+  }
+
+  const calTabButtons = Array.from(document.querySelectorAll(".cal-tab-btn"));
+  calTabButtons.forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      calTabButtons.forEach((b) => b.classList.remove("active"));
+      btn.classList.add("active");
+      const filter = btn.dataset.calFilter || "all";
+      await renderAcademicCalendarDashboard(filter, currentCalendarSearch);
+    });
+  });
+
+  const calendarSearchInput = document.getElementById("calendarSearchInput");
+  if (calendarSearchInput) {
+    calendarSearchInput.addEventListener("input", async (e) => {
+      const q = e.target.value || "";
+      await renderAcademicCalendarDashboard(currentCalendarFilter, q);
+    });
+  }
+
+  const calendarSemesterSelect = document.getElementById("calendarSemesterSelect");
+  if (calendarSemesterSelect) {
+    calendarSemesterSelect.addEventListener("change", async () => {
+      const chosenSem = calendarSemesterSelect.value;
+      const stored = await chrome.storage.local.get(CALENDAR_STORAGE_KEY);
+      if (stored[CALENDAR_STORAGE_KEY]) {
+        stored[CALENDAR_STORAGE_KEY].selectedSemesterId = chosenSem;
+        await chrome.storage.local.set({ [CALENDAR_STORAGE_KEY]: stored[CALENDAR_STORAGE_KEY] });
+      }
+      await renderAcademicCalendarDashboard();
+    });
+  }
+
+  const exportIcsBtn = document.getElementById("exportIcsBtn");
+  if (exportIcsBtn) {
+    exportIcsBtn.addEventListener("click", async () => {
+      try {
+        const stored = await chrome.storage.local.get(CALENDAR_STORAGE_KEY);
+        let data = stored[CALENDAR_STORAGE_KEY];
+        if (!data && window.VITCM_DB?.loadCalendarData) {
+          data = await window.VITCM_DB.loadCalendarData();
+        }
+        if (!data || !data.days || data.days.length === 0) {
+          if (quickActionStatus) quickActionStatus.textContent = "No calendar data to export. Sync calendar first.";
+          return;
+        }
+
+        const semSelect = document.getElementById("calendarSemesterSelect");
+        const activeSemId = semSelect ? semSelect.value : (data.selectedSemesterId || data.semesterId);
+        const activeRecord = (data.semesters && data.semesters[activeSemId]) ? data.semesters[activeSemId] : data;
+
+        const icsText = generateIcsCalendar(activeRecord);
+        if (!icsText) {
+          if (quickActionStatus) quickActionStatus.textContent = "Could not generate calendar events.";
+          return;
+        }
+
+        const blob = new Blob([icsText], { type: "text/calendar;charset=utf-8" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        const semClean = (activeRecord.semesterName || activeSemId || "sem").replace(/[^a-zA-Z0-9_-]/g, "_");
+        a.download = `vit_calendar_${semClean}.ics`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        if (quickActionStatus) quickActionStatus.textContent = `📅 Exported phone calendar (.ics) for ${activeRecord.semesterName || "semester"}!`;
+      } catch (err) {
+        if (quickActionStatus) quickActionStatus.textContent = `Export .ics failed: ${err.message || String(err)}`;
+      }
+    });
+  }
+
+  const exportMobileHtmlBtn = document.getElementById("exportMobileHtmlBtn");
+  if (exportMobileHtmlBtn) {
+    exportMobileHtmlBtn.addEventListener("click", async () => {
+      try {
+        const stored = await chrome.storage.local.get(CALENDAR_STORAGE_KEY);
+        let data = stored[CALENDAR_STORAGE_KEY];
+        if (!data && window.VITCM_DB?.loadCalendarData) {
+          data = await window.VITCM_DB.loadCalendarData();
+        }
+        if (!data || !data.days || data.days.length === 0) {
+          if (quickActionStatus) quickActionStatus.textContent = "No calendar data to export. Sync calendar first.";
+          return;
+        }
+
+        const semSelect = document.getElementById("calendarSemesterSelect");
+        const activeSemId = semSelect ? semSelect.value : (data.selectedSemesterId || data.semesterId);
+        const activeRecord = (data.semesters && data.semesters[activeSemId]) ? data.semesters[activeSemId] : data;
+
+        const htmlText = generateMobileHtmlCalendar(activeRecord);
+        if (!htmlText) {
+          if (quickActionStatus) quickActionStatus.textContent = "Could not generate mobile HTML calendar.";
+          return;
+        }
+
+        const blob = new Blob([htmlText], { type: "text/html;charset=utf-8" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        const semClean = (activeRecord.semesterName || activeSemId || "sem").replace(/[^a-zA-Z0-9_-]/g, "_");
+        a.download = `vit_academic_calendar_${semClean}.html`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        if (quickActionStatus) quickActionStatus.textContent = `📱 Exported mobile HTML calendar for ${activeRecord.semesterName || "semester"}!`;
+      } catch (err) {
+        if (quickActionStatus) quickActionStatus.textContent = `Export HTML failed: ${err.message || String(err)}`;
+      }
+    });
+  }
+
+  const syncCalendarBtn = document.getElementById("syncCalendarBtn");
+  const syncCalendarIcon = document.getElementById("syncCalendarIcon");
+  const syncCalendarBtnText = document.getElementById("syncCalendarBtnText");
+
+  if (syncCalendarBtn) {
+    syncCalendarBtn.addEventListener("click", async () => {
+      if (syncCalendarIcon) syncCalendarIcon.classList.add("spin");
+      if (syncCalendarBtnText) syncCalendarBtnText.textContent = "Syncing...";
+
+      try {
+        const tabs = await chrome.tabs.query({ url: "*://vtopcc.vit.ac.in/*" });
+        if (tabs.length === 0 || !tabs[0]?.id) {
+          if (quickActionStatus) {
+            quickActionStatus.textContent = "Opening VTOP tab. Please log in to sync academic calendar.";
+          }
+          chrome.tabs.create({ url: "https://vtopcc.vit.ac.in/vtop/open/page" });
+          return;
+        }
+
+        const tab = tabs[0];
+        const semSelect = document.getElementById("calendarSemesterSelect");
+        const chosenSemId = semSelect ? semSelect.value : null;
+
+        const res = await sendMessageWithInjectionFallback(tab.id, {
+          message: "fetch_academic_calendar",
+          semesterSubId: chosenSemId,
+          force: true
+        });
+
+        if (res?.ok) {
+          await renderAcademicCalendarDashboard();
+          if (quickActionStatus) {
+            quickActionStatus.textContent = `🗓️ Synced calendar! ${res.daysCount || 0} days (${res.holidaysCount || 0} holidays, ${res.eventsCount || 0} events).`;
+          }
+        } else {
+          if (quickActionStatus) {
+            quickActionStatus.textContent = `Calendar sync notice: ${res?.reason || res?.error || "Make sure you are logged in to VTOP."}`;
+          }
+        }
+      } catch (err) {
+        if (quickActionStatus) {
+          quickActionStatus.textContent = `Calendar sync failed: ${err?.message || String(err)}`;
+        }
+      } finally {
+        if (syncCalendarIcon) syncCalendarIcon.classList.remove("spin");
+        if (syncCalendarBtnText) syncCalendarBtnText.textContent = "Sync";
       }
     });
   }

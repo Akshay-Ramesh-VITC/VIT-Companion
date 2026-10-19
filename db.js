@@ -7,7 +7,7 @@
   "use strict";
 
   const DB_NAME = "vit_companion_marks_db";
-  const DB_VERSION = 1;
+  const DB_VERSION = 2;
 
   function openDatabase() {
     return new Promise((resolve, reject) => {
@@ -35,6 +35,10 @@
         }
         if (!db.objectStoreNames.contains("metadata")) {
           db.createObjectStore("metadata", { keyPath: "key" });
+        }
+        if (!db.objectStoreNames.contains("calendar")) {
+          const calStore = db.createObjectStore("calendar", { keyPath: "key" });
+          calStore.createIndex("semesterId", "semesterId", { unique: false });
         }
       };
 
@@ -219,10 +223,108 @@
     }
   }
 
+  async function saveCalendarData(calData) {
+    if (!calData || !calData.semesterId) return false;
+    try {
+      const db = await openDatabase();
+      const tx = db.transaction(["calendar", "metadata"], "readwrite");
+      const calStore = tx.objectStore("calendar");
+      const metaStore = tx.objectStore("metadata");
+
+      const semId = calData.semesterId;
+      metaStore.put({ key: "calendar_latest_sem_id", value: semId });
+      metaStore.put({ key: "calendar_last_checked", value: calData.lastChecked || Date.now() });
+
+      calStore.put({
+        key: `sem__${semId}`,
+        semesterId: semId,
+        semesterName: calData.semesterName || semId,
+        lastUpdated: calData.lastUpdated || Date.now(),
+        lastChecked: calData.lastChecked || Date.now(),
+        daysCount: (calData.days || []).length,
+        holidaysCount: calData.holidaysCount || 0,
+        eventsCount: calData.eventsCount || 0,
+        instructionalCount: calData.instructionalCount || 0,
+        dayOrdersCount: calData.dayOrdersCount || 0,
+        days: calData.days || []
+      });
+
+      (calData.days || []).forEach((d) => {
+        calStore.put({
+          key: `day__${semId}__${d.date}`,
+          semesterId: semId,
+          date: d.date,
+          dayNumber: d.dayNumber,
+          weekday: d.weekday,
+          instructional: d.instructional ? 1 : 0,
+          dayOrder: d.dayOrder || "",
+          label: d.label || "",
+          isHoliday: d.isHoliday ? 1 : 0,
+          isEvent: d.isEvent ? 1 : 0,
+          eventType: d.eventType || ""
+        });
+      });
+
+      return new Promise((resolve) => {
+        tx.oncomplete = () => resolve(true);
+        tx.onerror = () => resolve(false);
+      });
+    } catch (err) {
+      console.warn("VIT Companion: IndexedDB calendar save error", err);
+      return false;
+    }
+  }
+
+  async function loadCalendarData(targetSemId = null) {
+    try {
+      const db = await openDatabase();
+      const tx = db.transaction(["calendar", "metadata"], "readonly");
+      const calStore = tx.objectStore("calendar");
+      const metaStore = tx.objectStore("metadata");
+
+      const getMeta = (k) =>
+        new Promise((resolve) => {
+          const req = metaStore.get(k);
+          req.onsuccess = () => resolve(req.result ? req.result.value : null);
+          req.onerror = () => resolve(null);
+        });
+
+      let semId = targetSemId;
+      if (!semId) {
+        semId = await getMeta("calendar_latest_sem_id");
+      }
+
+      if (!semId) {
+        const allKeys = await new Promise((resolve) => {
+          const req = calStore.getAllKeys();
+          req.onsuccess = () => resolve(req.result || []);
+          req.onerror = () => resolve([]);
+        });
+        const semKey = allKeys.find((k) => String(k).startsWith("sem__"));
+        if (semKey) {
+          semId = String(semKey).replace("sem__", "");
+        }
+      }
+
+      if (!semId) return null;
+
+      const semRecord = await new Promise((resolve) => {
+        const req = calStore.get(`sem__${semId}`);
+        req.onsuccess = () => resolve(req.result || null);
+        req.onerror = () => resolve(null);
+      });
+
+      return semRecord;
+    } catch (err) {
+      console.warn("VIT Companion: IndexedDB calendar load error", err);
+      return null;
+    }
+  }
+
   function generateSqliteDump(data) {
     const lines = [
       "-- ========================================================",
-      "-- VIT Companion - Marks Database Export (.db / SQLite)",
+      "-- VIT Companion - Database Export (.db / SQLite)",
       `-- Generated on: ${new Date().toISOString()}`,
       "-- ========================================================",
       "",
@@ -273,6 +375,19 @@
       "  lost_weightage TEXT,",
       "  FOREIGN KEY (course_id) REFERENCES courses(id)",
       ");",
+      "",
+      "CREATE TABLE IF NOT EXISTS academic_calendar (",
+      "  date TEXT PRIMARY KEY,",
+      "  semester_id TEXT NOT NULL,",
+      "  semester_name TEXT,",
+      "  weekday TEXT,",
+      "  instructional INTEGER,",
+      "  day_order TEXT,",
+      "  label TEXT,",
+      "  is_holiday INTEGER,",
+      "  is_event INTEGER,",
+      "  event_type TEXT",
+      ");",
       ""
     ];
 
@@ -310,6 +425,15 @@
       }
     }
 
+    const calendarDays = data?.calendar?.days || data?.academicCalendar?.days || [];
+    const calSemId = data?.calendar?.semesterId || data?.academicCalendar?.semesterId || "";
+    const calSemName = data?.calendar?.semesterName || data?.academicCalendar?.semesterName || "";
+    for (const d of calendarDays) {
+      lines.push(
+        `INSERT OR REPLACE INTO academic_calendar (date, semester_id, semester_name, weekday, instructional, day_order, label, is_holiday, is_event, event_type) VALUES (${sqlEscape(d.date)}, ${sqlEscape(calSemId)}, ${sqlEscape(calSemName)}, ${sqlEscape(d.weekday)}, ${d.instructional ? 1 : 0}, ${sqlEscape(d.dayOrder || "")}, ${sqlEscape(d.label || "")}, ${d.isHoliday ? 1 : 0}, ${d.isEvent ? 1 : 0}, ${sqlEscape(d.eventType || "")});`
+      );
+    }
+
     lines.push("");
     lines.push("COMMIT;");
     lines.push("");
@@ -320,6 +444,8 @@
     openDatabase,
     saveMarksData,
     loadMarksData,
+    saveCalendarData,
+    loadCalendarData,
     generateSqliteDump
   };
 })();
