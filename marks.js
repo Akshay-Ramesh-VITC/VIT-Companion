@@ -182,6 +182,33 @@
       const assessments = [];
       let courseSummary = null;
 
+      // Dynamic column detection based on table headers (matches VtopMCP specification)
+      let titleCol = 1, maxCol = 2, wtCol = 3, statusCol = 4, scoredCol = 5, wtEquiCol = 6, avgCol = 7;
+      const headerTr = tables[j].querySelector("tr.tableHeader-level1") ||
+                       tables[j].querySelector("thead tr") ||
+                       tables[j].rows[0];
+      if (headerTr) {
+        const ths = Array.from(headerTr.querySelectorAll("th, td")).map(el => el.innerText.trim().toLowerCase());
+        const tIdx = ths.findIndex(h => h.includes("title") || h.includes("component") || h.includes("description") || h.includes("name"));
+        const mIdx = ths.findIndex(h => h.includes("max") && !h.includes("weightage"));
+        const wIdx = ths.findIndex(h => (h.includes("weightage") && (h.includes("%") || h.includes("percent"))) || h === "weightage");
+        const sIdx = ths.findIndex(h => h.includes("status"));
+        const scIdx = ths.findIndex((h, idx) => {
+          if (idx === tIdx || h.includes("title")) return false;
+          return h.includes("scored") || h.includes("obtained") || (h.includes("mark") && !h.includes("weightage") && !h.includes("max") && !h.includes("status"));
+        });
+        const weIdx = ths.findIndex(h => (h.includes("weightage") && (h.includes("mark") || h.includes("scored") || h.includes("equi") || h.includes("obtained"))) || h.includes("weightage mark"));
+        const aIdx = ths.findIndex(h => h.includes("average") || h.includes("avg"));
+
+        if (tIdx !== -1) titleCol = tIdx;
+        if (mIdx !== -1) maxCol = mIdx;
+        if (wIdx !== -1) wtCol = wIdx;
+        if (sIdx !== -1) statusCol = sIdx;
+        if (scIdx !== -1) scoredCol = scIdx; else scoredCol = 5;
+        if (weIdx !== -1) wtEquiCol = weIdx; else wtEquiCol = 6;
+        if (aIdx !== -1) avgCol = aIdx;
+      }
+
       for (let k = 0; k < tableMarks.length; k += 1) {
         const row = tableMarks[k];
         const rowText = row.innerText || "";
@@ -211,28 +238,43 @@
         }
 
         const tds = Array.from(row.getElementsByTagName("td")).map((td) => td.innerText.trim());
-        if (tds.length < 4) {
+        if (tds.length < 3) {
           continue;
         }
 
-        // Columns:
-        // tds[0]: Sl.No.
-        // tds[1]: Mark Title (e.g. Assessment - 1, Continuous Assessment Test - I)
-        // tds[2]: Max. Mark
-        // tds[3]: Weightage %
-        // tds[4]: Status (e.g. Present)
-        // tds[5]: Scored Mark (e.g. 9.0, 36.0, or -)
-        // tds[6]: Weightage Mark (e.g. 9, 10.8)
-        // tds[7]: Class Average
-        // tds[8]: Mark Posted Strength
-        // tds[9]: Remark
-        let title = tds[1] || `Assessment ${k + 1}`;
-        let maxMarks = tds[2] || "-";
-        let weightagePercent = tds[3] || "-";
-        let status = tds[4] || "";
-        let scored = tds[5] !== undefined && tds[5] !== "" ? tds[5] : "-";
-        let weightageEqui = tds[6] !== undefined && tds[6] !== "" ? tds[6] : "-";
-        let classAvg = tds[7] !== undefined && tds[7] !== "" ? tds[7] : "-";
+        let title = (tds[titleCol] || "").trim() || `Assessment ${k + 1}`;
+        let maxMarks = (tds[maxCol] || "-").trim();
+        let weightagePercent = (tds[wtCol] || "-").trim();
+        let status = (tds[statusCol] || "").trim();
+        let scored = tds[scoredCol] !== undefined && tds[scoredCol] !== "" ? tds[scoredCol].trim() : "-";
+        let weightageEqui = tds[wtEquiCol] !== undefined && tds[wtEquiCol] !== "" ? tds[wtEquiCol].trim() : "-";
+        let classAvg = tds[avgCol] !== undefined && tds[avgCol] !== "" ? tds[avgCol].trim() : "-";
+
+        // Safeguard: If scored got set to the title text or contains alphabetic words
+        if (scored === title || /[a-zA-Z]{2,}/.test(scored)) {
+          if (tds[5] !== undefined && tds[5] !== "" && !/[a-zA-Z]{2,}/.test(tds[5])) {
+            scored = tds[5].trim();
+          } else {
+            scored = "-";
+          }
+        }
+
+        const parsedMax = parseFloat(maxMarks.replace(/[^0-9.]+/g, "")) || 0;
+        const parsedWtPct = parseFloat(weightagePercent.replace(/[^0-9.]+/g, "")) || 0;
+        let parsedScored = parseFloat(scored.replace(/[^0-9.]+/g, ""));
+        let parsedWtEqui = parseFloat(weightageEqui.replace(/[^0-9.]+/g, ""));
+
+        // Auto-calculate weightageEqui if VTOP left it '-' or empty but scored mark is available
+        if ((isNaN(parsedWtEqui) || weightageEqui === "-" || weightageEqui === "" || parsedWtEqui === 0) && !isNaN(parsedScored) && parsedMax > 0 && parsedWtPct > 0) {
+          parsedWtEqui = (parsedScored / parsedMax) * parsedWtPct;
+          weightageEqui = parsedWtEqui.toFixed(2);
+        }
+
+        // Auto-recover scored mark if scored was '-' or missing but weightageEqui is present!
+        if ((isNaN(parsedScored) || scored === "-" || scored === "") && !isNaN(parsedWtEqui) && parsedWtEqui > 0 && parsedMax > 0 && parsedWtPct > 0) {
+          parsedScored = (parsedWtEqui / parsedWtPct) * parsedMax;
+          scored = parsedScored.toFixed(1).replace(/\.0$/, "");
+        }
 
         assessments.push({
           title,
@@ -243,6 +285,34 @@
           weightageEqui,
           classAvg
         });
+      }
+
+      // Always construct or verify courseSummary from assessments to ensure 100% accuracy
+      let sumMax = 0, sumWt = 0, sumScored = 0, sumWtScored = 0;
+      let hasScoredAssessments = false;
+      assessments.forEach(a => {
+        const mm = parseFloat(a.maxMarks) || 0;
+        const wp = parseFloat(a.weightagePercent) || 0;
+        const sc = parseFloat(a.scored);
+        const we = parseFloat(a.weightageEqui) || 0;
+        sumMax += mm;
+        sumWt += wp;
+        if (!isNaN(sc) && a.scored !== "-") {
+          sumScored += sc;
+          hasScoredAssessments = true;
+        }
+        sumWtScored += we;
+      });
+      const lost = Math.max(0, sumWt - sumWtScored);
+
+      if (!courseSummary || courseSummary.totalScored === "0.00" || courseSummary.totalScored === "-" || (!hasScoredAssessments && sumScored > 0) || (hasScoredAssessments && parseFloat(courseSummary.totalScored) === 0)) {
+        courseSummary = {
+          totalMaxMarks: sumMax.toFixed(2),
+          totalWeightage: sumWt.toFixed(2),
+          totalScored: sumScored.toFixed(2),
+          totalWeightageScored: sumWtScored.toFixed(2),
+          lostWeightage: lost.toFixed(2)
+        };
       }
 
       courses[courseKey] = {

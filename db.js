@@ -7,7 +7,7 @@
   "use strict";
 
   const DB_NAME = "vit_companion_marks_db";
-  const DB_VERSION = 3;
+  const DB_VERSION = 5;
 
   function openDatabase() {
     return new Promise((resolve, reject) => {
@@ -43,6 +43,11 @@
         if (!db.objectStoreNames.contains("personal_events")) {
           const peStore = db.createObjectStore("personal_events", { keyPath: "id" });
           peStore.createIndex("date", "date", { unique: false });
+        }
+        if (!db.objectStoreNames.contains("exam_schedule")) {
+          const examStore = db.createObjectStore("exam_schedule", { keyPath: "id" });
+          examStore.createIndex("examType", "examType", { unique: false });
+          examStore.createIndex("date", "date", { unique: false });
         }
       };
 
@@ -425,6 +430,102 @@
     }
   }
 
+  async function saveExamSchedule(data) {
+    if (!data) return false;
+    const exams = Array.isArray(data) ? data : (data.exams || []);
+    try {
+      const db = await openDatabase();
+
+      // 1. Read previous semester metadata in a dedicated read transaction first
+      let prevSemId = "";
+      let prevSemName = "";
+      try {
+        const readTx = db.transaction(["metadata"], "readonly");
+        const readMeta = readTx.objectStore("metadata");
+        const idReq = readMeta.get("exam_schedule_semester_id");
+        const nameReq = readMeta.get("exam_schedule_semester_name");
+        await new Promise((resolve) => {
+          readTx.oncomplete = () => {
+            prevSemId = (idReq.result && idReq.result.value) || "";
+            prevSemName = (nameReq.result && nameReq.result.value) || "";
+            resolve();
+          };
+          readTx.onerror = () => resolve();
+        });
+      } catch (_readErr) {}
+
+      const newSemId = data.semesterId || "";
+      const newSemName = data.semesterName || "";
+
+      // Check if a newer/different semester is synced
+      const isNewerSemester = Boolean(
+        (prevSemId && newSemId && prevSemId !== newSemId) ||
+        (!prevSemId && prevSemName && newSemName && prevSemName !== newSemName)
+      );
+
+      // 2. Open write transaction and execute all store writes synchronously
+      const tx = db.transaction(["exam_schedule", "metadata"], "readwrite");
+      const examStore = tx.objectStore("exam_schedule");
+      const metaStore = tx.objectStore("metadata");
+
+      if (isNewerSemester) {
+        console.log(`VIT Companion: New semester detected (${newSemName} vs ${prevSemName}). Clearing previous semester exam schedule from .db.`);
+        examStore.clear();
+      }
+
+      metaStore.put({ key: "exam_schedule_last_synced", value: data.lastSynced || Date.now() });
+      metaStore.put({ key: "exam_schedule_count", value: exams.length });
+      metaStore.put({ key: "exam_schedule_semester_name", value: newSemName });
+      metaStore.put({ key: "exam_schedule_semester_id", value: newSemId });
+
+      // Persist all exams on disk for current semester
+      exams.forEach((item) => {
+        if (item && item.id) {
+          examStore.put(item);
+        }
+      });
+
+      return new Promise((resolve) => {
+        tx.oncomplete = () => resolve(true);
+        tx.onerror = () => resolve(false);
+      });
+    } catch (err) {
+      console.warn("VIT Companion: IndexedDB exam schedule save error", err);
+      return false;
+    }
+  }
+
+  async function loadExamSchedule() {
+    try {
+      const db = await openDatabase();
+      const tx = db.transaction(["exam_schedule", "metadata"], "readonly");
+      const examStore = tx.objectStore("exam_schedule");
+      const metaStore = tx.objectStore("metadata");
+
+      const examsReq = examStore.getAll();
+      const syncReq = metaStore.get("exam_schedule_last_synced");
+      const nameReq = metaStore.get("exam_schedule_semester_name");
+      const idReq = metaStore.get("exam_schedule_semester_id");
+
+      return new Promise((resolve) => {
+        tx.oncomplete = () => {
+          resolve({
+            exams: examsReq.result || [],
+            lastSynced: (syncReq.result && syncReq.result.value) || 0,
+            semesterName: (nameReq.result && nameReq.result.value) || "",
+            semesterId: (idReq.result && idReq.result.value) || ""
+          });
+        };
+        tx.onerror = () => {
+          resolve({ exams: [], lastSynced: 0, semesterName: "", semesterId: "" });
+        };
+      });
+    } catch (err) {
+      console.warn("VIT Companion: IndexedDB exam schedule load error", err);
+      return { exams: [], lastSynced: 0, semesterName: "", semesterId: "" };
+    }
+  }
+
   function generateSqliteDump(data) {
     const lines = [
       "-- ========================================================",
@@ -502,6 +603,18 @@
       "  description TEXT,",
       "  created_at INTEGER",
       ");",
+      "",
+      "CREATE TABLE IF NOT EXISTS exam_schedule (",
+      "  id TEXT PRIMARY KEY,",
+      "  exam_type TEXT,",
+      "  course_code TEXT NOT NULL,",
+      "  course_title TEXT,",
+      "  exam_date TEXT,",
+      "  exam_time TEXT,",
+      "  venue TEXT,",
+      "  seat_location TEXT,",
+      "  slot TEXT",
+      ");",
       ""
     ];
 
@@ -557,6 +670,14 @@
       );
     }
 
+    lines.push("DELETE FROM exam_schedule;");
+    const examList = data?.exams || data?.examSchedule?.exams || [];
+    for (const ex of examList) {
+      lines.push(
+        `INSERT OR REPLACE INTO exam_schedule (id, exam_type, course_code, course_title, exam_date, exam_time, venue, seat_location, slot) VALUES (${sqlEscape(ex.id)}, ${sqlEscape(ex.examType || "")}, ${sqlEscape(ex.courseCode || "")}, ${sqlEscape(ex.courseTitle || "")}, ${sqlEscape(ex.date || ex.examDate || "")}, ${sqlEscape(ex.time || ex.examTime || "")}, ${sqlEscape(ex.venue || "")}, ${sqlEscape(ex.seat || ex.seatLocation || "")}, ${sqlEscape(ex.slot || "")});`
+      );
+    }
+
     lines.push("");
     lines.push("COMMIT;");
     lines.push("");
@@ -572,6 +693,8 @@
     savePersonalEvents,
     loadPersonalEvents,
     pruneOldSemesterPersonalEvents,
+    saveExamSchedule,
+    loadExamSchedule,
     generateSqliteDump
   };
 })();

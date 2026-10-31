@@ -25,10 +25,36 @@
       <div class="portal-name">VTOP</div>
   </button>
 
-  <button id="ffcsLaunch" class="portal-box">
-      <div class="portal-icon">📝</div>
-      <div class="portal-name">FFCS</div>
-  </button>
+  <div class="portal-dropdown-wrapper">
+    <button id="ffcsLaunch" class="portal-box" type="button" aria-haspopup="true" aria-expanded="false" title="FFCS Registration (Mock & Actual)">
+        <div class="portal-icon">📝</div>
+        <div class="portal-name">FFCS <span class="portal-caret">▾</span></div>
+    </button>
+    <div id="ffcsDropdownMenu" class="portal-dropdown-menu" style="display: none;">
+      <div class="portal-dropdown-header">FFCS Registration</div>
+      <button type="button" class="portal-dropdown-item" id="ffcsMockLaunch" title="Open FFCS Mock Registration">
+        <span class="portal-dropdown-item-icon">🧪</span>
+        <div class="portal-dropdown-item-info">
+          <span class="portal-dropdown-item-title">Mock Registration</span>
+          <span class="portal-dropdown-item-url">vtopregcc.vit.ac.in/MockRegistration</span>
+        </div>
+      </button>
+      <button type="button" class="portal-dropdown-item" id="ffcsActualLaunch" title="Open FFCS Actual Registration">
+        <span class="portal-dropdown-item-icon">⚡</span>
+        <div class="portal-dropdown-item-info">
+          <span class="portal-dropdown-item-title">Actual Registration</span>
+          <span class="portal-dropdown-item-url">vtopregcc.vit.ac.in/LiveRegistration</span>
+        </div>
+      </button>
+      <button type="button" class="portal-dropdown-item" id="feedbackLaunch" title="Open Mid/End Semester Feedback Form">
+        <span class="portal-dropdown-item-icon">📃</span>
+        <div class="portal-dropdown-item-info">
+          <span class="portal-dropdown-item-title">Mid/End Sem Feedback</span>
+          <span class="portal-dropdown-item-url">vtopregcc.vit.ac.in/endfeedback</span>
+        </div>
+      </button>
+    </div>
+  </div>
 
   <button id="codetLaunch" class="portal-box">
       <div class="portal-icon">📃</div>
@@ -91,6 +117,9 @@
             </select>
           </div>
           <div class="marks-actions-row">
+            <button type="button" id="openFatPredictorBtn" class="marks-action-chip fat-predictor-btn" title="Calculate required FAT scores for target grades and simulate GPA/CGPA">
+              🎯 FAT & GPA Predictor
+            </button>
             <button type="button" id="syncAllSemestersBtn" class="marks-action-chip" title="Sync marks for all available semesters from VTOP">
               🔄 Sync All
             </button>
@@ -254,6 +283,85 @@
         </div>
       </section>
 
+      <section class="exam-dashboard" aria-label="VTOP Exam Schedule & Seat Finder">
+        <div class="exam-card-header">
+          <div class="exam-header-left">
+            <span class="exam-header-icon">📝</span>
+            <div>
+              <div class="exam-title-wrap">
+                <span class="exam-title">Exam Schedule & Seat Finder</span>
+                <span id="examSemBadge" class="exam-badge" style="display: none;">Exam Schedule</span>
+              </div>
+              <p id="examLastUpdated" class="exam-sub-text">Checking exam schedule...</p>
+            </div>
+          </div>
+          <button type="button" id="syncExamsBtn" class="exam-sync-btn" title="Sync / Extract Exam Schedule from VTOP">
+            <span id="syncExamsIcon" class="sync-icon">🔄</span> <span id="syncExamsBtnText">Sync</span>
+          </button>
+        </div>
+
+        <!-- Hero Countdown & Next Exam Highlight -->
+        <div id="examHeroBox" class="exam-hero-box" style="display: none;">
+          <div class="exam-hero-top">
+            <span class="exam-hero-badge" id="examHeroBadge">🎯 NEXT EXAM</span>
+            <span class="exam-hero-countdown" id="examHeroCountdown">Starts in --</span>
+          </div>
+          <div class="exam-hero-course" id="examHeroCourseTitle">Course</div>
+          <div class="exam-hero-meta">
+            <span class="exam-hero-time" id="examHeroTime">📅 Date · ⏰ Time</span>
+          </div>
+          <div class="exam-hero-location">
+            <div class="hero-venue-chip" id="examHeroVenue" title="Room / Exam Hall">
+              <span class="chip-icon">📍</span>
+              <span class="chip-val">Venue: --</span>
+            </div>
+            <div class="hero-seat-chip" id="examHeroSeat" title="Seat Location">
+              <span class="chip-icon">🪑</span>
+              <span class="chip-val">Seat: --</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="exam-controls-container" id="examControlsBar">
+          <div class="exam-filter-row">
+            <div class="exam-tabs" id="examTabsContainer">
+              <button type="button" class="exam-tab-btn active" data-exam-filter="all">All</button>
+              <button type="button" class="exam-tab-btn" data-exam-filter="upcoming">⏳ Upcoming</button>
+              <button type="button" class="exam-tab-btn" data-exam-filter="cat1">CAT-1</button>
+              <button type="button" class="exam-tab-btn" data-exam-filter="cat2">CAT-2</button>
+              <button type="button" class="exam-tab-btn" data-exam-filter="fat">FAT</button>
+            </div>
+            <input type="text" id="examSearchInput" class="exam-search-input" placeholder="🔍 Search course, room (e.g. SJT), seat..." />
+          </div>
+          <div class="exam-actions-row">
+            <button type="button" id="exportExamIcsBtn" class="exam-action-chip" title="Export universal .ics calendar to add exam dates, venues & seat locations directly to phone calendar">
+              📅 Export .ics (Phone)
+            </button>
+            <div class="exam-copy-group">
+              <select id="examCopyFormatSelect" class="exam-format-select" title="Copy format">
+                <option value="WHATSAPP">WhatsApp Text</option>
+                <option value="MARKDOWN">Markdown Table</option>
+              </select>
+              <button type="button" id="copyExamScheduleBtn" class="exam-action-chip" title="Copy exam schedule to clipboard in selected format">
+                📋 Copy Schedule
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div class="exam-collapsible">
+          <button type="button" id="toggleExamScheduleBtn" class="exam-accordion-btn">
+            <span>📑 View Stored Exams (<span id="storedExamsCount">0</span> exams)</span>
+            <span id="storedExamsArrow" class="accordion-arrow">▼</span>
+          </button>
+          <div id="storedExamsPanel" class="stored-exams-panel" style="display: none;">
+            <div id="storedExamsContainer" class="stored-exams-container">
+              <p class="empty-exam-hint">Open the Exam Schedule page on VTOP and click Sync to save your exam dates, rooms, and seat numbers for 100% offline access.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
       <section class="site-card" data-site-key="vtop" aria-label="VTOP Student card">
         <div class="card-top">
           <div class="card-icon">⌂</div>
@@ -302,7 +410,11 @@
           <div class="card-icon">≡</div>
           <div class="site-meta">
             <h2>VTOP FFCS</h2>
-            <a class="site-domain" href="https://vtopregcc.vit.ac.in" target="_blank" rel="noopener noreferrer">vtopregcc.vit.ac.in</a>
+            <!-- <div class="ffcs-links-row">
+              <a class="site-domain" href="https://vtopregcc.vit.ac.in/MockRegistration" target="_blank" rel="noopener noreferrer" title="Open Mock Registration">🧪 Mock Registration</a>
+              <span class="ffcs-link-sep">·</span>
+              <a class="site-domain" href="https://vtopregcc.vit.ac.in/LiveRegistration" target="_blank" rel="noopener noreferrer" title="Open Actual Registration">⚡ Actual Registration</a>
+            </div> -->
           </div>
           <div class="card-chip" data-badge>Secure</div>
         </div>
@@ -517,6 +629,238 @@
             <button type="submit" id="saveEventBtn" class="cal-btn-primary">Save Event</button>
           </div>
         </form>
+      </div>
+    </div>
+
+    <!-- FAT Target & GPA Predictor Modal -->
+    <div id="fatPredictorModal" class="cal-modal-overlay" style="display: none;">
+      <div class="fat-modal-content">
+        <div class="fat-modal-header">
+          <div class="fat-modal-title-wrap">
+            <h3 class="fat-modal-title">🎯 FAT Target & GPA Predictor</h3>
+            <span class="fat-modal-subtitle">Predict required FAT marks and simulate semester GPA / CGPA</span>
+          </div>
+          <button type="button" id="closeFatModalBtn" class="cal-modal-close" title="Close">✕</button>
+        </div>
+
+        <div class="fat-tabs-bar">
+          <button type="button" id="fatTabTargetBtn" class="fat-tab-btn active">🎯 FAT Target Calculator</button>
+          <button type="button" id="fatTabGpaBtn" class="fat-tab-btn">📈 GPA & CGPA Simulator</button>
+        </div>
+
+        <!-- Tab 1: FAT Target Calculator (Relative Grading & Embedded Support) -->
+        <div id="fatTargetTabPanel" class="fat-tab-panel">
+          <div class="fat-form-group">
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+              <label for="fatCourseSelect">Select Course (from active semester):</label>
+              <span id="fatCourseTypeBadge" class="fat-course-type-pill">📘 Relative Grading</span>
+            </div>
+            <select id="fatCourseSelect" class="fat-select"></select>
+          </div>
+
+          <!-- Course Internals Stats -->
+          <div class="fat-stats-grid" id="fatCourseStatsBar">
+            <div class="fat-stat-card">
+              <span class="fat-stat-lbl">Theory Internals</span>
+              <span class="fat-stat-val" id="fatStatInternalScored">0.0 / 60</span>
+            </div>
+            <div class="fat-stat-card">
+              <span class="fat-stat-lbl">Lost Theory Wt</span>
+              <span class="fat-stat-val lost" id="fatStatLostWeightage">0.00%</span>
+            </div>
+            <div class="fat-stat-card">
+              <span class="fat-stat-lbl">Theory FAT Weightage</span>
+              <div class="fat-weightage-toggle">
+                <button type="button" class="fat-wt-btn" data-wt="30">30%</button>
+                <button type="button" class="fat-wt-btn active" data-wt="40">40%</button>
+                <button type="button" class="fat-wt-btn" data-wt="50">50%</button>
+                <button type="button" class="fat-wt-btn" data-wt="60">60%</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Component Marks Breakdown (CAT 1 + CAT 2 + Assessments + Lab for Embedded) -->
+          <div class="fat-components-card" id="fatComponentsCard">
+            <div class="fat-components-header">
+              <span class="fat-components-title">📊 Component Marks (Used in FAT Prediction)</span>
+              <span class="fat-components-sub" id="fatComponentsSubTitle">Synced from VTOP · Editable for simulation</span>
+            </div>
+            <div class="fat-components-grid">
+              <div class="fat-comp-item">
+                <div class="fat-comp-label-wrap">
+                  <span class="fat-comp-name">📝 CAT-1</span>
+                  <span class="fat-comp-weightage" id="fatCat1WeightageLabel">0.0 / 15</span>
+                </div>
+                <div class="fat-comp-input-wrap">
+                  <input type="number" id="fatInputCat1" class="fat-comp-input" min="0" max="50" step="0.5" placeholder="0" />
+                  <span class="fat-comp-max">/ 50</span>
+                </div>
+              </div>
+
+              <div class="fat-comp-item">
+                <div class="fat-comp-label-wrap">
+                  <span class="fat-comp-name">📝 CAT-2</span>
+                  <span class="fat-comp-weightage" id="fatCat2WeightageLabel">0.0 / 15</span>
+                </div>
+                <div class="fat-comp-input-wrap">
+                  <input type="number" id="fatInputCat2" class="fat-comp-input" min="0" max="50" step="0.5" placeholder="0" />
+                  <span class="fat-comp-max">/ 50</span>
+                </div>
+              </div>
+
+              <div class="fat-comp-item">
+                <div class="fat-comp-label-wrap">
+                  <span class="fat-comp-name">📑 Assessments (DAs/Quiz)</span>
+                  <span class="fat-comp-weightage" id="fatAssWeightageLabel">0.0 / 30</span>
+                </div>
+                <div class="fat-comp-input-wrap">
+                  <input type="number" id="fatInputAssessments" class="fat-comp-input" min="0" max="50" step="0.5" placeholder="0" data-max="30" />
+                  <span class="fat-comp-max" id="fatAssMaxLabel">/ 30</span>
+                </div>
+              </div>
+
+              <div class="fat-comp-item" id="fatLabCompItem">
+                <div class="fat-comp-label-wrap">
+                  <span class="fat-comp-name">🧪 Lab Component</span>
+                  <span class="fat-comp-weightage" id="fatLabContributionLabel">25% of overall</span>
+                </div>
+                <div class="fat-comp-input-wrap">
+                  <input type="number" id="fatInputLab" class="fat-comp-input" min="0" max="100" step="0.5" placeholder="80" />
+                  <span class="fat-comp-max">/ 100</span>
+                </div>
+              </div>
+            </div>
+            <div class="fat-components-formula-note" id="fatFormulaNote">
+              ⚡ <strong>Embedded Course Formula:</strong> Final Grade = 75% Theory (CAT-1 [15] + CAT-2 [15] + Assessments [30] + FAT) + 25% Lab.
+            </div>
+          </div>
+
+          <!-- Relative Curve Presets -->
+          <div class="fat-curve-presets-bar">
+            <label style="font-size: 10px; color: var(--muted); font-weight: 600;">Relative Grading Curve (VIT Standard):</label>
+            <div class="fat-presets-row" id="fatPresetsContainer">
+              <button type="button" class="fat-preset-btn active" data-preset="competitive">⚡ Standard Curve (S: 82+)</button>
+              <button type="button" class="fat-preset-btn" data-preset="tough">🔥 Tough / Embedded (S: 76+)</button>
+              <button type="button" class="fat-preset-btn" data-preset="high">🌟 High Curve (S: 88+)</button>
+              <button type="button" class="fat-preset-btn" data-preset="absolute">🎯 Absolute (S: 90+)</button>
+            </div>
+          </div>
+
+          <div class="fat-form-group">
+            <label>Target Letter Grade:</label>
+            <div class="fat-grade-pills" id="fatGradePillsContainer">
+              <button type="button" class="fat-grade-pill active" data-grade="S" data-cutoff="82">S (82+)</button>
+              <button type="button" class="fat-grade-pill" data-grade="A" data-cutoff="72">A (72+)</button>
+              <button type="button" class="fat-grade-pill" data-grade="B" data-cutoff="62">B (62+)</button>
+              <button type="button" class="fat-grade-pill" data-grade="C" data-cutoff="52">C (52+)</button>
+              <button type="button" class="fat-grade-pill" data-grade="D" data-cutoff="45">D (45+)</button>
+              <button type="button" class="fat-grade-pill" data-grade="E" data-cutoff="40">E (40+)</button>
+            </div>
+          </div>
+
+          <div class="fat-cutoff-row">
+            <div style="display:flex; flex-direction:column; gap:2px;">
+              <label for="fatCustomCutoffInput" style="font-size: 10px; color: #cbd5e1; font-weight: 600;">Target Overall Course Mark (out of 100):</label>
+              <span style="font-size: 9px; color: var(--muted);">Directly adjust your target score for class curve</span>
+            </div>
+            <div class="fat-cutoff-input-wrap">
+              <input type="number" id="fatCustomCutoffInput" class="fat-cutoff-input" min="30" max="100" step="1" value="82" />
+              <span>marks</span>
+            </div>
+          </div>
+
+          <div class="fat-cutoff-row" style="background: rgba(255, 255, 255, 0.02);">
+            <div style="display:flex; flex-direction:column; gap:2px;">
+              <label for="fatClassAvgInput" style="font-size: 10px; color: #94a3b8;">Class Average (μ) Estimator (Optional):</label>
+              <span style="font-size: 9px; color: var(--muted);">Auto-shifts relative tiers to μ + 1.5σ (e.g. avg 62 → S: ~78)</span>
+            </div>
+            <div class="fat-cutoff-input-wrap">
+              <input type="number" id="fatClassAvgInput" class="fat-cutoff-input" min="20" max="95" placeholder="e.g. 62" />
+              <span>avg</span>
+            </div>
+          </div>
+
+          <!-- Hero Target Result Callout -->
+          <div class="fat-result-card" id="fatResultCard">
+            <div class="fat-result-top">
+              <span class="fat-result-badge" id="fatResultBadge">🎯 TARGET: S GRADE (82+)</span>
+              <span class="fat-feasibility-tag" id="fatFeasibilityTag">Feasible</span>
+            </div>
+            <div class="fat-score-needed-wrap">
+              <span class="fat-score-label">Required Score in Theory FAT:</span>
+              <span class="fat-score-number" id="fatScoreNeededVal">--</span>
+            </div>
+            <p class="fat-result-desc" id="fatResultDesc">Select a course to view required score.</p>
+            <div class="fat-pass-rule-note" id="fatRegulationsNoticeBox">
+              <span>⚠️ <strong>VIT Passing Rule:</strong> Minimum 40 / 100 in Theory FAT is mandatory to pass. For Embedded courses, combined overall course mark must be ≥ 50%.</span>
+            </div>
+          </div>
+
+          <!-- Grade Breakdown Matrix -->
+          <div class="fat-matrix-section">
+            <h4 class="fat-matrix-title">📊 Full Grade Breakdown for Selected Course</h4>
+            <div class="fat-table-wrapper">
+              <table class="fat-matrix-table">
+                <thead>
+                  <tr>
+                    <th>Grade</th>
+                    <th>Cutoff</th>
+                    <th>Required in FAT</th>
+                    <th>Feasibility</th>
+                  </tr>
+                </thead>
+                <tbody id="fatMatrixTableBody">
+                  <tr><td colspan="4" class="empty-matrix-hint">Select a course above.</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- Tab 2: GPA & CGPA Simulator -->
+        <div id="fatGpaTabPanel" class="fat-tab-panel" style="display: none;">
+          <div class="gpa-summary-card">
+            <div class="gpa-summary-col">
+              <span class="gpa-sum-lbl">Projected Semester GPA</span>
+              <span class="gpa-sum-val" id="projectedSemGpaVal">0.00</span>
+            </div>
+            <div class="gpa-summary-col">
+              <span class="gpa-sum-lbl">Projected Cumulative CGPA</span>
+              <div class="gpa-cgpa-display">
+                <span class="gpa-sum-val cgpa" id="projectedCumulativeCgpaVal">0.00</span>
+                <span class="gpa-delta-pill" id="cgpaDeltaPill">--</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Prior CGPA Inputs -->
+          <div class="gpa-prior-box">
+            <div class="gpa-input-group">
+              <label for="inputCurrentCgpa">Current CGPA (Prior):</label>
+              <input type="number" id="inputCurrentCgpa" class="gpa-num-input" min="0" max="10" step="0.01" placeholder="e.g. 8.75" />
+            </div>
+            <div class="gpa-input-group">
+              <label for="inputPriorCredits">Credits Completed (Prior):</label>
+              <input type="number" id="inputPriorCredits" class="gpa-num-input" min="0" max="250" step="1" placeholder="e.g. 64" />
+            </div>
+          </div>
+
+          <div class="gpa-course-list-wrap">
+            <h4 class="gpa-table-title">Courses in Selected Semester</h4>
+            <table class="gpa-course-table">
+              <thead>
+                <tr>
+                  <th>Course</th>
+                  <th style="width: 60px;">Credits</th>
+                  <th style="width: 100px;">Predicted Grade</th>
+                </tr>
+              </thead>
+              <tbody id="gpaCourseTableBody">
+                <tr><td colspan="3" class="empty-matrix-hint">No courses found in active semester.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
       </div>
     </div>
   </body>

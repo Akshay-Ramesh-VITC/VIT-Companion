@@ -454,7 +454,7 @@
 
     if (document.URL.includes("vtopcc.vit.ac.in")) {
       handleVtopCaptcha(false);
-    } else if (document.URL.includes("https://vtopregcc.vit.ac.in/RegistrationNew/")) {
+    } else if (document.URL.includes("vtopregcc.vit.ac.in/RegistrationNew") || document.URL.includes("vtopregcc.vit.ac.in/MockRegistration") || document.URL.includes("vtopregcc.vit.ac.in")) {
       handleFFCSCaptcha(false);
     }
   }

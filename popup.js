@@ -120,13 +120,77 @@ url:"https://vtopcc.vit.ac.in/vtop/login"
 
 });
 
-document.getElementById("ffcsLaunch")
-.addEventListener("click",()=>{
+const ffcsLaunchBtn = document.getElementById("ffcsLaunch");
+const ffcsDropdownMenu = document.getElementById("ffcsDropdownMenu");
+const ffcsDropdownWrapper = ffcsLaunchBtn?.closest(".portal-dropdown-wrapper");
+const ffcsMockLaunch = document.getElementById("ffcsMockLaunch");
+const ffcsActualLaunch = document.getElementById("ffcsActualLaunch");
 
-chrome.tabs.create({
-url:"https://vtopregcc.vit.ac.in"
+function toggleFfcsDropdown(forceState) {
+  if (!ffcsDropdownMenu) return;
+  const isCurrentlyOpen = ffcsDropdownMenu.style.display !== "none";
+  const shouldOpen = typeof forceState === "boolean" ? forceState : !isCurrentlyOpen;
+
+  if (shouldOpen) {
+    ffcsDropdownMenu.style.display = "flex";
+    if (ffcsDropdownWrapper) ffcsDropdownWrapper.classList.add("open");
+    if (ffcsLaunchBtn) ffcsLaunchBtn.setAttribute("aria-expanded", "true");
+  } else {
+    ffcsDropdownMenu.style.display = "none";
+    if (ffcsDropdownWrapper) ffcsDropdownWrapper.classList.remove("open");
+    if (ffcsLaunchBtn) ffcsLaunchBtn.setAttribute("aria-expanded", "false");
+  }
+}
+
+if (ffcsLaunchBtn) {
+  ffcsLaunchBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    toggleFfcsDropdown();
+  });
+}
+
+if (ffcsMockLaunch) {
+  ffcsMockLaunch.addEventListener("click", (e) => {
+    e.stopPropagation();
+    toggleFfcsDropdown(false);
+    chrome.tabs.create({
+      url: "https://vtopregcc.vit.ac.in/MockRegistration"
+    });
+  });
+}
+
+if (ffcsActualLaunch) {
+  ffcsActualLaunch.addEventListener("click", (e) => {
+    e.stopPropagation();
+    toggleFfcsDropdown(false);
+    chrome.tabs.create({
+      url: "https://vtopregcc.vit.ac.in/LiveRegistration"
+    });
+  });
+}
+
+if (feedbackLaunch) {
+  feedbackLaunch.addEventListener("click", (e) => {
+    e.stopPropagation();
+    toggleFfcsDropdown(false);
+    chrome.tabs.create({
+      url: "https://vtopregcc.vit.ac.in/endfeedback"
+    });
+  });
+}
+
+document.addEventListener("click", (e) => {
+  if (ffcsDropdownMenu && ffcsDropdownMenu.style.display !== "none") {
+    if (!ffcsDropdownMenu.contains(e.target) && !ffcsLaunchBtn?.contains(e.target)) {
+      toggleFfcsDropdown(false);
+    }
+  }
 });
 
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && ffcsDropdownMenu && ffcsDropdownMenu.style.display !== "none") {
+    toggleFfcsDropdown(false);
+  }
 });
 
 document.getElementById("lmsLaunch")
@@ -536,17 +600,64 @@ async function requestCaptchaAssist(siteKey) {
 }
 
 const MARKS_STORAGE_KEY = "vit_stored_marks";
+let cachedMarksData = null;
 
-function formatMarksTimestamp(ts) {
+async function getStoredMarksData() {
+  if (cachedMarksData) return cachedMarksData;
+  const res = await chrome.storage.local.get(MARKS_STORAGE_KEY);
+  let data = res[MARKS_STORAGE_KEY] || null;
+  if (!data && window.VITCM_DB?.loadMarksData) {
+    try {
+      data = await window.VITCM_DB.loadMarksData();
+    } catch (_e) {}
+  }
+  cachedMarksData = data || null;
+  return cachedMarksData;
+}
+
+function formatSyncTimestamp(ts) {
   if (!ts) return "Not synced yet";
   const date = new Date(ts);
+  if (isNaN(date.getTime())) return "Not synced yet";
+
   const now = new Date();
   const diffSec = Math.floor((now.getTime() - date.getTime()) / 1000);
+
+  if (diffSec < 0) return "Just now";
   if (diffSec < 60) return "Just now";
   if (diffSec < 3600) return `${Math.floor(diffSec / 60)}m ago`;
-  if (diffSec < 86400) return `Today at ${date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
-  return `${date.toLocaleDateString([], { month: "short", day: "numeric" })} at ${date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
+
+  const timeStr = date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+
+  const isToday = (
+    date.getDate() === now.getDate() &&
+    date.getMonth() === now.getMonth() &&
+    date.getFullYear() === now.getFullYear()
+  );
+  if (isToday) {
+    return `Today at ${timeStr}`;
+  }
+
+  const yesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
+  const isYesterday = (
+    date.getDate() === yesterday.getDate() &&
+    date.getMonth() === yesterday.getMonth() &&
+    date.getFullYear() === yesterday.getFullYear()
+  );
+  if (isYesterday) {
+    return `Yesterday at ${timeStr}`;
+  }
+
+  const isCurrentYear = date.getFullYear() === now.getFullYear();
+  const dateStr = date.toLocaleDateString([], isCurrentYear
+    ? { month: "short", day: "numeric" }
+    : { month: "short", day: "numeric", year: "numeric" }
+  );
+
+  return `${dateStr} at ${timeStr}`;
 }
+
+const formatMarksTimestamp = formatSyncTimestamp;
 
 function escapeHtml(str) {
   if (!str) return "";
@@ -556,6 +667,832 @@ function escapeHtml(str) {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#039;");
+}
+
+// ========================================================
+// OFFLINE EXAM VENUE & SEAT FINDER LOGIC
+// ========================================================
+
+async function getStoredExamSchedule() {
+  if (cachedExamData && cachedExamData.exams && cachedExamData.exams.length > 0) {
+    return cachedExamData;
+  }
+
+  let data = null;
+
+  // 1. Primary storage: Load from .db (IndexedDB)
+  if (window.VITCM_DB?.loadExamSchedule) {
+    try {
+      const idbData = await window.VITCM_DB.loadExamSchedule();
+      if (idbData && Array.isArray(idbData.exams) && idbData.exams.length > 0) {
+        data = idbData;
+      }
+    } catch (_idbErr) {}
+  }
+
+  // 2. Secondary fallback check in chrome.storage.local
+  if (!data || !data.exams || data.exams.length === 0) {
+    const res = await chrome.storage.local.get(EXAM_SCHEDULE_STORAGE_KEY);
+    if (res[EXAM_SCHEDULE_STORAGE_KEY]) {
+      data = res[EXAM_SCHEDULE_STORAGE_KEY];
+      // Save directly into .db so .db remains the primary source
+      if (window.VITCM_DB?.saveExamSchedule) {
+        await window.VITCM_DB.saveExamSchedule(data);
+      }
+    }
+  }
+
+  // 3. Purge any table header rows while preserving real exams
+  if (data && Array.isArray(data.exams)) {
+    const clean = data.exams.filter((e) => {
+      if (!e || !e.courseCode) return false;
+      const c = e.courseCode.toLowerCase().trim();
+      const t = (e.courseTitle || "").toLowerCase().trim();
+      if (c === "course code" || c === "code" || c === "venue" || c.includes("sl.no")) return false;
+      if (t === "course title" || t === "title") return false;
+      if (!/^[A-Z]{2,5}\s*\d{3,4}[A-Z]?$/i.test(e.courseCode.replace(/\s+/g, ""))) return false;
+      return true;
+    });
+    if (clean.length !== data.exams.length && clean.length > 0) {
+      data.exams = clean;
+      if (window.VITCM_DB?.saveExamSchedule) {
+        window.VITCM_DB.saveExamSchedule(data);
+      }
+      chrome.storage.local.set({ [EXAM_SCHEDULE_STORAGE_KEY]: data });
+    }
+  }
+
+  cachedExamData = data || { exams: [], lastSynced: 0, semesterName: "", semesterId: "" };
+  return cachedExamData;
+}
+function generateExamScheduleIcs(examData) {
+  const exams = examData?.exams || [];
+  if (exams.length === 0) return null;
+
+  const escapeIcs = (str) => {
+    if (!str) return "";
+    return String(str)
+      .replace(/\\/g, "\\\\")
+      .replace(/;/g, "\\;")
+      .replace(/,/g, "\\,")
+      .replace(/\r?\n/g, "\\n");
+  };
+
+  const getNextDateIcs = (dateStr) => {
+    const parts = (dateStr || "").split("-").map(Number);
+    if (parts.length < 3 || isNaN(parts[0])) return "";
+    const dt = new Date(Date.UTC(parts[0], parts[1] - 1, parts[2] + 1));
+    const ny = dt.getUTCFullYear();
+    const nm = String(dt.getUTCMonth() + 1).padStart(2, "0");
+    const nd = String(dt.getUTCDate()).padStart(2, "0");
+    return `${ny}${nm}${nd}`;
+  };
+
+  const formatIcsDate = (dateStr) => (dateStr || "").replace(/-/g, "");
+  const nowUtc = new Date().toISOString().replace(/[-:]/g, "").split(".")[0] + "Z";
+  const semName = examData.semesterName || "VIT Exam Schedule";
+
+  const lines = [
+    "BEGIN:VCALENDAR",
+    "VERSION:2.0",
+    "PRODID:-//VIT Companion//Exam Schedule//EN",
+    "CALSCALE:GREGORIAN",
+    "METHOD:PUBLISH",
+    `X-WR-CALNAME:${escapeIcs(`VIT Exams - ${semName}`)}`,
+    "X-WR-TIMEZONE:Asia/Kolkata",
+    "BEGIN:VTIMEZONE",
+    "TZID:Asia/Kolkata",
+    "X-LIC-LOCATION:Asia/Kolkata",
+    "BEGIN:STANDARD",
+    "TZOFFSETFROM:+0530",
+    "TZOFFSETTO:+0530",
+    "TZNAME:IST",
+    "DTSTART:19700101T000000",
+    "END:STANDARD",
+    "END:VTIMEZONE"
+  ];
+
+  exams.forEach((ex, idx) => {
+    const dtStart = formatIcsDate(ex.date);
+    const dtEnd = getNextDateIcs(ex.date);
+    if (!dtStart || !dtEnd) return;
+
+    const summary = `📝 [${ex.examType || "Exam"}] ${ex.courseCode} - ${ex.courseTitle}`;
+    const descLines = [
+      `Course: ${ex.courseCode} - ${ex.courseTitle}`,
+      `Exam Type: ${ex.rawExamType || ex.examType}`,
+      `Venue / Room: ${ex.venue || "TBA"}`,
+      `Seat Location: ${ex.seat || "TBA"}`,
+      `Timing: ${ex.time || "TBA"}`
+    ];
+    if (ex.slot) descLines.push(`Slot: ${ex.slot}`);
+    descLines.push("Exported by VIT Companion Offline Seat Finder");
+
+    lines.push("BEGIN:VEVENT");
+    lines.push(`UID:vit-exam-${ex.id || idx}@vitcompanion`);
+    lines.push(`DTSTAMP:${nowUtc}`);
+    lines.push(`DTSTART;VALUE=DATE:${dtStart}`);
+    lines.push(`DTEND;VALUE=DATE:${dtEnd}`);
+    lines.push(`SUMMARY:${escapeIcs(summary)}`);
+    lines.push(`LOCATION:${escapeIcs(ex.venue ? `${ex.venue} (Seat: ${ex.seat || "TBA"})` : "VIT Campus")}`);
+    lines.push(`DESCRIPTION:${escapeIcs(descLines.join("\n"))}`);
+    lines.push("STATUS:CONFIRMED");
+    lines.push("TRANSP:OPAQUE");
+    lines.push("BEGIN:VALARM");
+    lines.push("ACTION:DISPLAY");
+    lines.push(`DESCRIPTION:Exam in 2 hours: ${escapeIcs(ex.courseCode)} in ${escapeIcs(ex.venue || "TBA")} (Seat: ${escapeIcs(ex.seat || "TBA")})`);
+    lines.push("TRIGGER:-PT2H");
+    lines.push("END:VALARM");
+    lines.push("END:VEVENT");
+  });
+
+  lines.push("END:VCALENDAR");
+  return lines.join("\r\n");
+}
+
+async function renderExamScheduleDashboard(activeFilter = currentExamFilter, searchQuery = currentExamSearch) {
+  const lastUpdatedEl = document.getElementById("examLastUpdated");
+  const badgeEl = document.getElementById("examSemBadge");
+  const heroBox = document.getElementById("examHeroBox");
+  const heroBadge = document.getElementById("examHeroBadge");
+  const heroCountdown = document.getElementById("examHeroCountdown");
+  const heroCourse = document.getElementById("examHeroCourseTitle");
+  const heroTime = document.getElementById("examHeroTime");
+  const heroVenue = document.getElementById("examHeroVenue");
+  const heroSeat = document.getElementById("examHeroSeat");
+  const countEl = document.getElementById("storedExamsCount");
+  const containerEl = document.getElementById("storedExamsContainer");
+
+  if (!lastUpdatedEl) return;
+
+  currentExamFilter = activeFilter;
+  currentExamSearch = searchQuery;
+
+  const examData = await getStoredExamSchedule();
+  const allExams = examData?.exams || [];
+
+  if (allExams.length === 0) {
+    lastUpdatedEl.textContent = "Not synced yet";
+    if (badgeEl) badgeEl.style.display = "none";
+    if (heroBox) heroBox.style.display = "none";
+    if (countEl) countEl.textContent = "0";
+    if (containerEl) {
+      containerEl.innerHTML = '<p class="empty-exam-hint">Open the Exam Schedule page on VTOP and click Sync to save your exam dates, rooms, and seat numbers for 100% offline access.</p>';
+    }
+    return;
+  }
+
+  lastUpdatedEl.textContent = `Last synced: ${formatSyncTimestamp(examData.lastSynced)}`;
+  if (badgeEl) {
+    badgeEl.textContent = examData.semesterName || "Exam Schedule";
+    badgeEl.style.display = "inline-block";
+  }
+  if (countEl) countEl.textContent = String(allExams.length);
+
+  // Compute Next Upcoming Exam Countdown
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const nowMs = Date.now();
+  const upcomingExams = allExams.filter((e) => {
+    if (e.timestamp && e.timestamp > nowMs - 3 * 3600 * 1000) return true;
+    if (e.date && e.date >= todayStr) return true;
+    return false;
+  });
+
+  if (heroBox) {
+    if (upcomingExams.length > 0) {
+      const nextEx = upcomingExams[0];
+      heroBox.style.display = "flex";
+
+      let countdownText = "Upcoming";
+      if (nextEx.date === todayStr) {
+        countdownText = `🔥 TODAY · ${nextEx.time || "Exam"}`;
+      } else {
+        const parts = (nextEx.date || "").split("-").map(Number);
+        if (parts.length === 3) {
+          const exDateObj = new Date(parts[0], parts[1] - 1, parts[2]);
+          const todayDateObj = new Date(new Date().getFullYear(), new Date().getMonth(), new Date().getDate());
+          const diffDays = Math.round((exDateObj - todayDateObj) / (86400 * 1000));
+          if (diffDays === 1) {
+            countdownText = `⚡ Tomorrow · ${nextEx.time || ""}`;
+          } else if (diffDays > 1) {
+            countdownText = `Starts in ${diffDays} days (${nextEx.rawDate || nextEx.date})`;
+          }
+        }
+      }
+
+      if (heroBadge) heroBadge.textContent = `🎯 NEXT EXAM (${nextEx.examType || "EXAM"})`;
+      if (heroCountdown) heroCountdown.textContent = countdownText;
+      if (heroCourse) heroCourse.textContent = `${nextEx.courseCode} - ${nextEx.courseTitle}`;
+      if (heroTime) heroTime.textContent = `📅 ${nextEx.rawDate || nextEx.date} · ⏰ ${nextEx.time}`;
+      if (heroVenue) {
+        heroVenue.innerHTML = `<span class="chip-icon">📍</span><span class="chip-val">Venue: <strong>${escapeHtml(nextEx.venue || "TBA")}</strong></span>`;
+      }
+      if (heroSeat) {
+        heroSeat.innerHTML = `<span class="chip-icon">🪑</span><span class="chip-val">Seat: <strong>${escapeHtml(nextEx.seat || "TBA")}</strong></span>`;
+      }
+    } else {
+      heroBox.style.display = "flex";
+      if (heroBadge) heroBadge.textContent = "✓ EXAMS COMPLETED";
+      if (heroCountdown) heroCountdown.textContent = "All Finished";
+      if (heroCourse) heroCourse.textContent = "All scheduled exams for this semester are complete.";
+      if (heroTime) heroTime.textContent = "Check marks dashboard for newly posted results.";
+      if (heroVenue) heroVenue.innerHTML = '<span class="chip-icon">🎉</span><span class="chip-val">Well done!</span>';
+      if (heroSeat) heroSeat.innerHTML = '<span class="chip-icon">✨</span><span class="chip-val">Semester Complete</span>';
+    }
+  }
+
+  // Filter exams
+  let filtered = allExams;
+  if (activeFilter === "upcoming") {
+    filtered = upcomingExams;
+  } else if (activeFilter === "cat1") {
+    filtered = allExams.filter((e) => e.examType === "CAT-1");
+  } else if (activeFilter === "cat2") {
+    filtered = allExams.filter((e) => e.examType === "CAT-2");
+  } else if (activeFilter === "fat") {
+    filtered = allExams.filter((e) => e.examType === "FAT" || e.examType === "Lab FAT");
+  }
+
+  if (searchQuery && searchQuery.trim()) {
+    const q = searchQuery.toLowerCase().trim();
+    filtered = filtered.filter((e) => {
+      const hay = `${e.courseCode} ${e.courseTitle} ${e.venue} ${e.seat} ${e.date} ${e.rawDate} ${e.examType}`.toLowerCase();
+      return hay.includes(q);
+    });
+  }
+
+  if (containerEl) {
+    if (filtered.length === 0) {
+      containerEl.innerHTML = '<p class="empty-exam-hint">No exams match the selected filter or search query.</p>';
+      return;
+    }
+
+    containerEl.innerHTML = filtered.map((ex) => {
+      const isToday = ex.date === todayStr;
+      const isPast = ex.date && ex.date < todayStr;
+      let statusTag = '';
+      if (isToday) {
+        statusTag = '<span class="exam-status-tag today">🔥 Today</span>';
+      } else if (isPast) {
+        statusTag = '<span class="exam-status-tag done">✓ Completed</span>';
+      } else {
+        const parts = (ex.date || "").split("-").map(Number);
+        let daysAway = "";
+        if (parts.length === 3) {
+          const dObj = new Date(parts[0], parts[1] - 1, parts[2]);
+          const tObj = new Date(new Date().getFullYear(), new Date().getMonth(), new Date().getDate());
+          const dDiff = Math.round((dObj - tObj) / (86400 * 1000));
+          if (dDiff > 0) daysAway = `in ${dDiff}d`;
+        }
+        statusTag = `<span class="exam-status-tag upcoming">⏳ ${daysAway || "Upcoming"}</span>`;
+      }
+
+      return `
+        <div class="exam-item-card ${isToday ? 'is-today' : ''}">
+          <div class="exam-item-top">
+            <span class="exam-item-code">${escapeHtml(ex.courseCode)}</span>
+            <span class="exam-item-type-pill">${escapeHtml(ex.examType)}</span>
+          </div>
+          <div class="exam-item-title">${escapeHtml(ex.courseTitle)}</div>
+          <div class="exam-item-info">
+            <span>📅 ${escapeHtml(ex.rawDate || ex.date)} · ⏰ ${escapeHtml(ex.time || "TBA")}</span>
+            ${statusTag}
+          </div>
+          <div class="exam-loc-badges">
+            <div class="exam-venue-pill" title="Exam Room / Hall">
+              <span>📍 Room:</span> <strong>${escapeHtml(ex.venue || "TBA")}</strong>
+            </div>
+            <div class="exam-seat-pill" title="Seat Location">
+              <span>🪑 Seat:</span> <strong>${escapeHtml(ex.seat || "TBA")}</strong>
+            </div>
+          </div>
+        </div>
+      `;
+    }).join("");
+  }
+}
+
+// ========================================================
+// FAT TARGET & GRADE PREDICTOR LOGIC
+// ========================================================
+
+function populateComponentsForSelectedCourse() {
+  const courseSelect = document.getElementById("fatCourseSelect");
+  if (!courseSelect || !courseSelect.value) return;
+
+  const courseKey = courseSelect.value;
+  const marksData = cachedMarksData || {};
+  const activeSemId = marksData.selectedSemesterId || marksData.currentSemesterId;
+  const semData = marksData.semesters?.[activeSemId];
+  const course = semData?.courses?.[courseKey];
+  if (!course) return;
+
+  const code = (course.courseCode || "").trim().toUpperCase();
+  const subType = (course.subType || course.courseType || "").toLowerCase();
+  const isEmbedded = code.endsWith("E") || subType.includes("embedded");
+
+  const cat1Input = document.getElementById("fatInputCat1");
+  const cat2Input = document.getElementById("fatInputCat2");
+  const assInput = document.getElementById("fatInputAssessments");
+  const assMaxLabel = document.getElementById("fatAssMaxLabel");
+  const labCompItem = document.getElementById("fatLabCompItem");
+  const labInput = document.getElementById("fatInputLab");
+  const formulaNote = document.getElementById("fatFormulaNote");
+  const courseTypeBadge = document.getElementById("fatCourseTypeBadge");
+
+  if (labCompItem) {
+    labCompItem.style.display = isEmbedded ? "flex" : "none";
+  }
+  if (formulaNote) {
+    if (isEmbedded) {
+      formulaNote.innerHTML = "⚡ <strong>Embedded Course Formula:</strong> Final Grade = 75% Theory (CAT-1 [15] + CAT-2 [15] + Assessments [30] + FAT [40]) + 25% Lab. Passing: ≥40 in FAT & ≥50% overall.";
+    } else {
+      formulaNote.innerHTML = "📘 <strong>Theory Course Formula:</strong> Final Grade = Theory Internals (CAT-1 [15] + CAT-2 [15] + Assessments) + Theory FAT. Passing: ≥40 in FAT.";
+    }
+  }
+
+  if (courseTypeBadge) {
+    if (isEmbedded) {
+      courseTypeBadge.className = "fat-course-type-pill";
+      courseTypeBadge.style.background = "rgba(168, 85, 247, 0.15)";
+      courseTypeBadge.style.color = "#c084fc";
+      courseTypeBadge.style.borderColor = "rgba(168, 85, 247, 0.35)";
+      courseTypeBadge.innerHTML = `⚡ Embedded Course (${escapeHtml(code)}) · 75% Theory + 25% Lab`;
+    } else {
+      courseTypeBadge.className = "fat-course-type-pill";
+      courseTypeBadge.style.background = "rgba(56, 189, 248, 0.15)";
+      courseTypeBadge.style.color = "#38bdf8";
+      courseTypeBadge.style.borderColor = "rgba(56, 189, 248, 0.3)";
+      courseTypeBadge.innerHTML = "📘 Theory Course · Relative Grading";
+    }
+  }
+
+  const assessments = course.assessments || [];
+  let foundCat1 = null;
+  let foundCat2 = null;
+  let otherAssessmentsScored = 0;
+  let otherAssessmentsMax = 0;
+
+  for (const a of assessments) {
+    const title = (a.title || "").toLowerCase();
+    const mm = parseFloat(a.maxMarks) || 50;
+    const wp = parseFloat(a.weightagePercent) || 15;
+    let we = parseFloat(a.weightageEqui);
+    let sc = parseFloat(a.scored);
+
+    // If scored is corrupted (equals title or contains non-numeric text), recover from weightageEqui
+    if ((isNaN(sc) || a.scored === a.title || /[a-zA-Z]{2,}/.test(String(a.scored))) && !isNaN(we) && we > 0 && wp > 0) {
+      sc = (we / wp) * mm;
+    }
+
+    if (isNaN(we) || we <= 0) {
+      we = !isNaN(sc) && mm > 0 ? (sc / mm) * wp : 0;
+    }
+
+    if (!foundCat1 && (title.includes("cat-1") || title.includes("cat 1") || title.includes("cat-i") || title.includes("assessment test - i") || title.includes("assessment test 1") || title.includes("cat1"))) {
+      foundCat1 = { scored: !isNaN(sc) ? sc : 0, max: mm, weightage: wp, equi: we };
+      continue;
+    }
+
+    if (!foundCat2 && (title.includes("cat-2") || title.includes("cat 2") || title.includes("cat-ii") || title.includes("assessment test - ii") || title.includes("assessment test 2") || title.includes("cat2"))) {
+      foundCat2 = { scored: !isNaN(sc) ? sc : 0, max: mm, weightage: wp, equi: we };
+      continue;
+    }
+
+    if (title.includes("fat") || title.includes("final") || title.includes("terminal") || title.includes("tee")) {
+      continue;
+    }
+
+    // Other assessments (Assignments, DAs, Quizzes)
+    const scoredWeightage = !isNaN(we) && we > 0 ? we : (!isNaN(sc) && mm > 0 ? (sc / mm) * wp : 0);
+    otherAssessmentsScored += scoredWeightage;
+    otherAssessmentsMax += wp;
+  }
+
+  const defaultAssMax = isEmbedded ? 30 : 10;
+  const assMax = otherAssessmentsMax > 0 ? otherAssessmentsMax : defaultAssMax;
+
+  if (cat1Input) {
+    cat1Input.value = foundCat1 ? parseFloat(foundCat1.scored.toFixed(1)) : 0;
+  }
+  if (cat2Input) {
+    cat2Input.value = foundCat2 ? parseFloat(foundCat2.scored.toFixed(1)) : 0;
+  }
+  if (assInput) {
+    assInput.value = otherAssessmentsScored > 0 ? parseFloat(otherAssessmentsScored.toFixed(1)) : 0;
+    assInput.max = assMax;
+    assInput.dataset.max = assMax;
+  }
+  if (assMaxLabel) {
+    assMaxLabel.textContent = `/ ${assMax}`;
+  }
+
+  if (isEmbedded && labInput) {
+    let companionLab = null;
+    if (subType.includes("lab")) {
+      companionLab = course;
+    } else {
+      const allCourses = Object.values(semData.courses || {});
+      companionLab = allCourses.find((c) => {
+        const cCode = (c.courseCode || "").trim().toUpperCase();
+        const cType = (c.subType || c.courseType || "").toLowerCase();
+        return cCode === code && cType.includes("lab");
+      });
+    }
+
+    if (companionLab && companionLab.summary) {
+      const labScored = parseFloat(companionLab.summary.totalScored || companionLab.summary.totalWeightageScored || "0") || 0;
+      const labMax = parseFloat(companionLab.summary.totalMaxMarks || companionLab.summary.totalWeightage || "100") || 100;
+      const labNormalized = labMax > 0 ? (labScored / labMax) * 100 : labScored;
+      labInput.value = parseFloat(labNormalized.toFixed(1)) || 80;
+    } else {
+      labInput.value = 80;
+    }
+  }
+}
+
+function updateFatPredictorDisplay() {
+  const courseSelect = document.getElementById("fatCourseSelect");
+  const statInternal = document.getElementById("fatStatInternalScored");
+  const statLost = document.getElementById("fatStatLostWeightage");
+  const resultBadge = document.getElementById("fatResultBadge");
+  const feasibilityTag = document.getElementById("fatFeasibilityTag");
+  const scoreVal = document.getElementById("fatScoreNeededVal");
+  const resultDesc = document.getElementById("fatResultDesc");
+  const matrixBody = document.getElementById("fatMatrixTableBody");
+  const noticeBox = document.getElementById("fatRegulationsNoticeBox");
+  const pillsContainer = document.getElementById("fatGradePillsContainer");
+  const customCutoffInput = document.getElementById("fatCustomCutoffInput");
+
+  const cat1Input = document.getElementById("fatInputCat1");
+  const cat2Input = document.getElementById("fatInputCat2");
+  const assInput = document.getElementById("fatInputAssessments");
+  const labInput = document.getElementById("fatInputLab");
+
+  const cat1WtLbl = document.getElementById("fatCat1WeightageLabel");
+  const cat2WtLbl = document.getElementById("fatCat2WeightageLabel");
+  const assWtLbl = document.getElementById("fatAssWeightageLabel");
+  const labContributionLbl = document.getElementById("fatLabContributionLabel");
+
+  if (!courseSelect || !courseSelect.value) {
+    if (scoreVal) scoreVal.textContent = "--";
+    if (resultDesc) resultDesc.textContent = "Select a course to view required score.";
+    return;
+  }
+
+  const courseKey = courseSelect.value;
+  const marksData = cachedMarksData || {};
+  const activeSemId = marksData.selectedSemesterId || marksData.currentSemesterId;
+  const semData = marksData.semesters?.[activeSemId];
+  const course = semData?.courses?.[courseKey];
+  if (!course) return;
+
+  const code = (course.courseCode || "").trim().toUpperCase();
+  const subType = (course.subType || course.courseType || "").toLowerCase();
+  const isEmbedded = code.endsWith("E") || subType.includes("embedded");
+
+  const cat1Scored = parseFloat(cat1Input?.value || "0") || 0;
+  const cat2Scored = parseFloat(cat2Input?.value || "0") || 0;
+  const assScored = parseFloat(assInput?.value || "0") || 0;
+  const assMax = parseFloat(assInput?.dataset.max || "30") || 30;
+  const labScored = parseFloat(labInput?.value || "80") || 0;
+
+  // Theory Internals calculation:
+  // CAT 1: Converted from 50 to 15 marks
+  const cat1Wt = Math.min(15, (cat1Scored / 50) * 15);
+  // CAT 2: Converted from 50 to 15 marks
+  const cat2Wt = Math.min(15, (cat2Scored / 50) * 15);
+  // Assessments: up to assMax (typically 30 for Embedded, 10 for Theory)
+  const assWt = Math.min(assMax, assScored);
+
+  const theoryInternals = cat1Wt + cat2Wt + assWt;
+  const theoryInternalsMax = 15 + 15 + assMax;
+
+  if (cat1WtLbl) cat1WtLbl.textContent = `${cat1Wt.toFixed(2)} / 15`;
+  if (cat2WtLbl) cat2WtLbl.textContent = `${cat2Wt.toFixed(2)} / 15`;
+  if (assWtLbl) assWtLbl.textContent = `${assWt.toFixed(2)} / ${assMax}`;
+  if (labContributionLbl) {
+    const labOverall = (0.25 * labScored).toFixed(2);
+    labContributionLbl.textContent = `${labOverall} / 25 (${labScored.toFixed(0)}/100)`;
+  }
+
+  if (statInternal) statInternal.textContent = `${theoryInternals.toFixed(1)} / ${theoryInternalsMax}`;
+
+  // Evaluated weightage so far (CAT1 + CAT2 + Assessments entered)
+  const evaluatedWeightageSoFar = (cat1Scored > 0 ? 15 : 0) + (cat2Scored > 0 ? 15 : 0) + (assScored > 0 ? assWt : 0);
+  const lostTheoryWt = evaluatedWeightageSoFar > 0 ? Math.max(0, evaluatedWeightageSoFar - theoryInternals) : 0;
+  if (statLost) {
+    if (course.summary?.lostWeightage && course.summary.lostWeightage !== "-") {
+      statLost.textContent = `${course.summary.lostWeightage}%`;
+    } else {
+      statLost.textContent = `${lostTheoryWt.toFixed(2)}%`;
+    }
+  }
+
+  const theoryFatWeightage = currentFatWeightage || (100 - theoryInternalsMax > 0 ? (100 - theoryInternalsMax) : 40);
+
+  if (pillsContainer) {
+    pillsContainer.querySelectorAll(".fat-grade-pill").forEach((btn) => {
+      const g = btn.dataset.grade;
+      const c = currentFatCutoffs[g] || 80;
+      btn.textContent = `${g} (${c}+)`;
+      btn.dataset.cutoff = c;
+    });
+  }
+
+  const targetCutoff = currentFatCutoff || currentFatCutoffs[currentFatGrade] || (isEmbedded ? 76 : 82);
+  const gradeLabel = currentFatGrade || "S";
+
+  if (customCutoffInput && customCutoffInput.value !== String(targetCutoff)) {
+    customCutoffInput.value = targetCutoff;
+  }
+
+  if (noticeBox) {
+    if (isEmbedded) {
+      noticeBox.innerHTML = `<span>⚠️ <strong>VIT Embedded Regulations (${escapeHtml(code)}):</strong> Evaluated on Relative Grading (75% Theory + 25% Lab). Minimum <strong>40.0 / 100</strong> in Theory FAT and ≥ <strong>50%</strong> overall combined course mark is mandatory to pass.</span>`;
+    } else {
+      noticeBox.innerHTML = "<span>⚠️ <strong>VIT Theory Regulations:</strong> Evaluated on Relative Grading. Minimum <strong>40.0 / 100</strong> in Theory FAT and ≥ <strong>40%</strong> overall total is required to pass.</span>";
+    }
+  }
+
+  function calculateRequiredFat(target) {
+    let reqTheoryTotal = target;
+    let labContrib = 0;
+
+    if (isEmbedded) {
+      // Overall = 75% Theory + 25% Lab
+      labContrib = 0.25 * labScored;
+      reqTheoryTotal = (target - labContrib) / 0.75;
+    }
+
+    const maxAchievableTheory = theoryInternals + theoryFatWeightage;
+    const maxAchievableOverall = isEmbedded ? (0.75 * maxAchievableTheory + labContrib) : maxAchievableTheory;
+
+    if (target > maxAchievableOverall || reqTheoryTotal > 100) {
+      return {
+        scoreNeeded: null,
+        display: "Impossible",
+        status: "impossible",
+        desc: `Mathematically impossible to achieve ${target}. Max achievable overall is ${maxAchievableOverall.toFixed(1)} / 100${isEmbedded ? ` (Theory Max: ${maxAchievableTheory.toFixed(1)}, Lab: ${labScored.toFixed(1)})` : ""}.`
+      };
+    }
+
+    const neededFromFat = reqTheoryTotal - theoryInternals;
+    const rawFatScoreNeeded = (neededFromFat / theoryFatWeightage) * 100;
+
+    if (rawFatScoreNeeded <= 0) {
+      return {
+        scoreNeeded: 40,
+        display: "40.0 / 100*",
+        status: "feasible",
+        desc: `Target (${target}) is already secured by your internal marks! You only need the mandatory 40.0 / 100 in Theory FAT to pass.`
+      };
+    }
+
+    const rounded = Math.max(40, parseFloat(rawFatScoreNeeded.toFixed(1)));
+    const isPassRuleApplied = rawFatScoreNeeded < 40;
+    let status = "feasible";
+    if (rounded > 85) status = "high";
+    else if (rounded > 60) status = "moderate";
+
+    let descText = "";
+    if (isPassRuleApplied) {
+      descText = `Mathematically needs ${rawFatScoreNeeded.toFixed(1)}%, but minimum 40.0 / 100 in Theory FAT is compulsory under VIT passing regulations.`;
+    } else if (isEmbedded) {
+      descText = `Score at least ${rounded.toFixed(1)} / 100 in Theory FAT. [Formula: 75% Theory (${theoryInternals.toFixed(1)} internals + ${((rounded / 100) * theoryFatWeightage).toFixed(1)} FAT) + 25% Lab (${labScored.toFixed(1)}) = ${target}]`;
+    } else {
+      descText = `Score at least ${rounded.toFixed(1)} / 100 in Theory FAT to reach overall course score of ${target}.`;
+    }
+
+    return {
+      scoreNeeded: rounded,
+      display: `${rounded.toFixed(1)} / 100${isPassRuleApplied ? "*" : ""}`,
+      status,
+      desc: descText
+    };
+  }
+
+  const calc = calculateRequiredFat(targetCutoff);
+
+  if (resultBadge) resultBadge.textContent = `🎯 TARGET: ${gradeLabel} GRADE (${targetCutoff}+)`;
+  if (scoreVal) scoreVal.textContent = calc.display;
+  if (resultDesc) resultDesc.textContent = calc.desc;
+
+  if (feasibilityTag) {
+    feasibilityTag.className = `fat-feasibility-tag ${calc.status}`;
+    if (calc.status === "feasible") feasibilityTag.textContent = "🟢 Easily Feasible";
+    else if (calc.status === "moderate") feasibilityTag.textContent = "🟡 Moderate Effort";
+    else if (calc.status === "high") feasibilityTag.textContent = "🟠 High Score Required";
+    else feasibilityTag.textContent = "🔴 Impossible";
+  }
+
+  if (matrixBody) {
+    const grades = ["S", "A", "B", "C", "D", "E"];
+    matrixBody.innerHTML = grades.map((g) => {
+      const c = currentFatCutoffs[g] || 40;
+      const gCalc = calculateRequiredFat(c);
+      let tagHtml = "";
+      if (gCalc.status === "feasible") tagHtml = '<span style="color:#34d399;font-weight:700;">🟢 Feasible</span>';
+      else if (gCalc.status === "moderate") tagHtml = '<span style="color:#fbbf24;font-weight:700;">🟡 Moderate</span>';
+      else if (gCalc.status === "high") tagHtml = '<span style="color:#fb923c;font-weight:700;">🟠 High Score</span>';
+      else tagHtml = '<span style="color:#f87171;font-weight:700;">🔴 Impossible</span>';
+
+      return `
+        <tr>
+          <td><strong>${g}</strong></td>
+          <td>${c}+</td>
+          <td style="font-weight:700; color:${gCalc.status === 'impossible' ? '#f87171' : '#f1f5f9'};">${gCalc.display}</td>
+          <td>${tagHtml}</td>
+        </tr>
+      `;
+    }).join("");
+  }
+}
+function renderGpaSimulator() {
+  const gpaTableBody = document.getElementById("gpaCourseTableBody");
+  const projectedSemGpaEl = document.getElementById("projectedSemGpaVal");
+  const projectedCgpaEl = document.getElementById("projectedCumulativeCgpaVal");
+  const cgpaDeltaPill = document.getElementById("cgpaDeltaPill");
+  const inputCgpa = document.getElementById("inputCurrentCgpa");
+  const inputCredits = document.getElementById("inputPriorCredits");
+
+  if (!gpaTableBody) return;
+
+  const activeSemId = cachedMarksData?.selectedSemesterId || cachedMarksData?.currentSemesterId;
+  const semData = cachedMarksData?.semesters?.[activeSemId];
+  const courses = semData?.courses || {};
+  const courseKeys = Object.keys(courses);
+
+  if (courseKeys.length === 0) {
+    gpaTableBody.innerHTML = '<tr><td colspan="3" class="empty-matrix-hint">No courses found in active semester.</td></tr>';
+    if (projectedSemGpaEl) projectedSemGpaEl.textContent = "0.00";
+    if (projectedCgpaEl) projectedCgpaEl.textContent = "0.00";
+    return;
+  }
+
+  // Grade points map
+  const gradePoints = { S: 10, A: 9, B: 8, C: 7, D: 6, E: 5, F: 0 };
+
+  // Restore saved CGPA simulator preferences
+  chrome.storage.local.get(CGPA_PREFS_STORAGE_KEY).then((res) => {
+    const prefs = res[CGPA_PREFS_STORAGE_KEY] || {};
+    if (inputCgpa && prefs.priorCgpa !== undefined && inputCgpa.value === "") {
+      inputCgpa.value = prefs.priorCgpa;
+    }
+    if (inputCredits && prefs.priorCredits !== undefined && inputCredits.value === "") {
+      inputCredits.value = prefs.priorCredits;
+    }
+    recalculateGpa();
+  });
+
+  gpaTableBody.innerHTML = courseKeys.map((k) => {
+    const c = courses[k];
+    const subType = (c.subType || c.courseType || "").toLowerCase();
+    const isLab = subType.includes("lab");
+    const defaultCredits = isLab ? 1 : 3;
+
+    // Suggest initial predicted grade based on current lost weightage
+    const lostWt = parseFloat(c.summary?.lostWeightage || "0") || 0;
+    let autoGrade = "S";
+    if (lostWt > 25) autoGrade = "C";
+    else if (lostWt > 15) autoGrade = "B";
+    else if (lostWt > 8) autoGrade = "A";
+
+    return `
+      <tr data-course-key="${escapeHtml(k)}">
+        <td>
+          <div style="font-weight:700; color:#f1f5f9;">${escapeHtml(c.courseCode)}</div>
+          <div style="font-size:9px; color:var(--muted); max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHtml(c.courseTitle)}</div>
+        </td>
+        <td>
+          <input type="number" class="gpa-credits-input" min="1" max="10" step="0.5" value="${defaultCredits}" />
+        </td>
+        <td>
+          <select class="gpa-grade-select">
+            <option value="10" ${autoGrade === 'S' ? 'selected' : ''}>S (10)</option>
+            <option value="9" ${autoGrade === 'A' ? 'selected' : ''}>A (9)</option>
+            <option value="8" ${autoGrade === 'B' ? 'selected' : ''}>B (8)</option>
+            <option value="7" ${autoGrade === 'C' ? 'selected' : ''}>C (7)</option>
+            <option value="6" ${autoGrade === 'D' ? 'selected' : ''}>D (6)</option>
+            <option value="5" ${autoGrade === 'E' ? 'selected' : ''}>E (5)</option>
+            <option value="0" ${autoGrade === 'F' ? 'selected' : ''}>F (0)</option>
+          </select>
+        </td>
+      </tr>
+    `;
+  }).join("");
+
+  function recalculateGpa() {
+    const rows = gpaTableBody.querySelectorAll("tr[data-course-key]");
+    let totPoints = 0;
+    let totCredits = 0;
+
+    rows.forEach((r) => {
+      const credInput = r.querySelector(".gpa-credits-input");
+      const gradeSel = r.querySelector(".gpa-grade-select");
+      const cred = parseFloat(credInput?.value || "3") || 0;
+      const gp = parseFloat(gradeSel?.value || "10") || 0;
+      totPoints += cred * gp;
+      totCredits += cred;
+    });
+
+    const semGpa = totCredits > 0 ? totPoints / totCredits : 0;
+    if (projectedSemGpaEl) projectedSemGpaEl.textContent = semGpa.toFixed(2);
+
+    const priorCgpa = parseFloat(inputCgpa?.value || "0") || 0;
+    const priorCredits = parseFloat(inputCredits?.value || "0") || 0;
+
+    if (priorCgpa > 0 && priorCredits > 0 && totCredits > 0) {
+      const combinedCredits = priorCredits + totCredits;
+      const newCgpa = ((priorCgpa * priorCredits) + (semGpa * totCredits)) / combinedCredits;
+      if (projectedCgpaEl) projectedCgpaEl.textContent = newCgpa.toFixed(2);
+
+      const delta = newCgpa - priorCgpa;
+      if (cgpaDeltaPill) {
+        cgpaDeltaPill.style.display = "inline-block";
+        if (delta >= 0) {
+          cgpaDeltaPill.textContent = `▲ +${delta.toFixed(2)}`;
+          cgpaDeltaPill.style.background = "rgba(34, 197, 94, 0.15)";
+          cgpaDeltaPill.style.color = "#4ade80";
+        } else {
+          cgpaDeltaPill.textContent = `▼ ${delta.toFixed(2)}`;
+          cgpaDeltaPill.style.background = "rgba(239, 68, 68, 0.15)";
+          cgpaDeltaPill.style.color = "#f87171";
+        }
+      }
+    } else {
+      if (projectedCgpaEl) projectedCgpaEl.textContent = semGpa.toFixed(2);
+      if (cgpaDeltaPill) cgpaDeltaPill.style.display = "none";
+    }
+
+    // Save preferences
+    chrome.storage.local.set({
+      [CGPA_PREFS_STORAGE_KEY]: {
+        priorCgpa: inputCgpa?.value || "",
+        priorCredits: inputCredits?.value || ""
+      }
+    });
+  }
+
+  gpaTableBody.addEventListener("input", recalculateGpa);
+  gpaTableBody.addEventListener("change", recalculateGpa);
+  if (inputCgpa) inputCgpa.addEventListener("input", recalculateGpa);
+  if (inputCredits) inputCredits.addEventListener("input", recalculateGpa);
+
+  recalculateGpa();
+}
+
+async function openFatPredictorModal() {
+  const modal = document.getElementById("fatPredictorModal");
+  const courseSelect = document.getElementById("fatCourseSelect");
+  if (!modal) return;
+
+  const marksData = await getStoredMarksData();
+  const activeSemId = marksData?.selectedSemesterId || marksData?.currentSemesterId;
+  const semData = marksData?.semesters?.[activeSemId];
+  const courses = semData?.courses || {};
+  const courseKeys = Object.keys(courses);
+
+  if (courseSelect) {
+    if (courseKeys.length > 0) {
+      courseSelect.innerHTML = courseKeys.map((k) => {
+        const c = courses[k];
+        const sub = c.subType || c.courseType || "General";
+        return `<option value="${escapeHtml(k)}">${escapeHtml(c.courseCode)} - ${escapeHtml(c.courseTitle)} (${escapeHtml(sub)})</option>`;
+      }).join("");
+      if (!currentFatCourseKey || !courses[currentFatCourseKey]) {
+        currentFatCourseKey = courseKeys[0];
+      }
+      courseSelect.value = currentFatCourseKey;
+    } else {
+      courseSelect.innerHTML = '<option value="">No courses available in this semester</option>';
+      currentFatCourseKey = null;
+    }
+  }
+
+  // Auto-select curve preset based on selected course
+  if (currentFatCourseKey && semData?.courses?.[currentFatCourseKey]) {
+    const c = semData.courses[currentFatCourseKey];
+    const isEmb = (c.courseCode || "").endsWith("E") || (c.subType || c.courseType || "").toLowerCase().includes("embedded");
+    currentFatCurvePreset = isEmb ? "tough" : "competitive";
+    currentFatCutoffs = { ...FAT_CURVE_PRESETS[currentFatCurvePreset].cutoffs };
+    currentFatCutoff = currentFatCutoffs[currentFatGrade] || (isEmb ? 76 : 82);
+
+    const presetBtns = document.querySelectorAll(".fat-preset-btn");
+    presetBtns.forEach((b) => {
+      b.classList.toggle("active", b.dataset.preset === currentFatCurvePreset);
+    });
+  }
+
+  modal.style.display = "flex";
+  populateComponentsForSelectedCourse();
+  updateFatPredictorDisplay();
+  renderGpaSimulator();
+}
+
+function closeFatPredictorModal() {
+  const modal = document.getElementById("fatPredictorModal");
+  if (modal) modal.style.display = "none";
 }
 
 async function renderStoredMarksDashboard() {
@@ -583,6 +1520,70 @@ async function renderStoredMarksDashboard() {
     } catch (_dbLoadErr) {}
   }
 
+  cachedMarksData = data;
+
+  // Sanitize cached marks to repair any corrupted titles in scored column or 0.00 totals
+  let dataModified = false;
+  if (data && data.semesters) {
+    for (const sem of Object.values(data.semesters)) {
+      if (!sem || !sem.courses) continue;
+      for (const c of Object.values(sem.courses)) {
+        if (!c || !c.assessments) continue;
+        let sumScored = 0;
+        let sumMax = 0;
+        let sumWt = 0;
+        let sumWtScored = 0;
+        let hasFixedAny = false;
+
+        for (const a of c.assessments) {
+          const isCorrupt = a.scored === a.title || /[a-zA-Z]{2,}/.test(String(a.scored));
+          const mm = parseFloat(a.maxMarks) || 0;
+          const wp = parseFloat(a.weightagePercent) || 0;
+          let we = parseFloat(a.weightageEqui);
+          let sc = parseFloat(a.scored);
+
+          if (isCorrupt || isNaN(sc)) {
+            if (!isNaN(we) && we > 0 && mm > 0 && wp > 0) {
+              sc = (we / wp) * mm;
+              a.scored = sc.toFixed(1).replace(/\.0$/, "");
+              hasFixedAny = true;
+              dataModified = true;
+            } else {
+              a.scored = "-";
+            }
+          }
+
+          if (!isNaN(sc) && a.scored !== "-") {
+            sumScored += sc;
+          }
+          sumMax += mm;
+          sumWt += wp;
+          if (!isNaN(we)) sumWtScored += we;
+        }
+
+        if (hasFixedAny || !c.summary || c.summary.totalScored === "0.00" || c.summary.totalScored === "-" || (sumScored > 0 && parseFloat(c.summary.totalScored || "0") === 0)) {
+          const lost = Math.max(0, sumWt - sumWtScored);
+          c.summary = {
+            totalMaxMarks: sumMax > 0 ? sumMax.toFixed(2) : (c.summary?.totalMaxMarks || "-"),
+            totalWeightage: sumWt > 0 ? sumWt.toFixed(2) : (c.summary?.totalWeightage || "-"),
+            totalScored: sumScored > 0 ? sumScored.toFixed(2) : "0.00",
+            totalWeightageScored: sumWtScored > 0 ? sumWtScored.toFixed(2) : (c.summary?.totalWeightageScored || "-"),
+            lostWeightage: lost.toFixed(2)
+          };
+          dataModified = true;
+        }
+      }
+    }
+  }
+
+  if (dataModified) {
+    cachedMarksData = data;
+    chrome.storage.local.set({ [MARKS_STORAGE_KEY]: data });
+    if (window.VITCM_DB?.saveMarksData) {
+      window.VITCM_DB.saveMarksData(data).catch(() => {});
+    }
+  }
+
   if (!data || !data.lastChecked) {
     lastUpdatedEl.textContent = "Not synced yet";
     if (badgeEl) badgeEl.style.display = "none";
@@ -596,7 +1597,7 @@ async function renderStoredMarksDashboard() {
     return;
   }
 
-  lastUpdatedEl.textContent = `Last checked: ${formatMarksTimestamp(data.lastChecked)}`;
+  lastUpdatedEl.textContent = `Last synced: ${formatMarksTimestamp(data.lastChecked || data.lastUpdated)}`;
 
   const unreadCount = data.unreadUpdatesCount || 0;
   if (badgeEl) {
@@ -754,6 +1755,24 @@ async function renderStoredMarksDashboard() {
 }
 
 const CALENDAR_STORAGE_KEY = "vit_academic_calendar";
+const EXAM_SCHEDULE_STORAGE_KEY = "vit_stored_exam_schedule";
+let cachedExamData = null;
+let currentExamFilter = "all";
+let currentExamSearch = "";
+
+let currentFatCourseKey = null;
+let currentFatGrade = "S";
+let currentFatWeightage = 40;
+let currentFatCurvePreset = "competitive";
+const FAT_CURVE_PRESETS = {
+  competitive: { name: "Standard Relative", cutoffs: { S: 82, A: 72, B: 62, C: 52, D: 45, E: 40 } },
+  tough: { name: "Tough / Embedded", cutoffs: { S: 76, A: 66, B: 56, C: 50, D: 45, E: 40 } },
+  high: { name: "High Curve", cutoffs: { S: 88, A: 78, B: 68, C: 58, D: 50, E: 40 } },
+  absolute: { name: "Absolute Grading", cutoffs: { S: 90, A: 80, B: 70, C: 60, D: 50, E: 40 } }
+};
+let currentFatCutoffs = { ...FAT_CURVE_PRESETS.competitive.cutoffs };
+let currentFatCutoff = 82;
+const CGPA_PREFS_STORAGE_KEY = "vit_cgpa_simulator_prefs";
 let currentCalendarFilter = "all";
 let currentCalendarSearch = "";
 let cachedCalendarData = null;
@@ -761,16 +1780,7 @@ let currentCalendarMonth = null;
 let currentCalendarViewMode = "table";
 let selectedDayDate = null;
 
-function formatCalendarTimestamp(ts) {
-  if (!ts) return "Not synced yet";
-  const date = new Date(ts);
-  const now = new Date();
-  const diffSec = Math.floor((now.getTime() - date.getTime()) / 1000);
-  if (diffSec < 60) return "Just now";
-  if (diffSec < 3600) return `${Math.floor(diffSec / 60)}m ago`;
-  if (diffSec < 86400) return `Today at ${date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
-  return `${date.toLocaleDateString([], { month: "short", day: "numeric" })} at ${date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
-}
+const formatCalendarTimestamp = formatSyncTimestamp;
 
 function weekdayOf(dateStr) {
   if (!dateStr) return "";
@@ -1264,6 +2274,44 @@ function generateIcsCalendar(calData) {
     lines.push(`DESCRIPTION:${escapeIcs(descLines.join("\n"))}`);
     lines.push("STATUS:CONFIRMED");
     lines.push("TRANSP:TRANSPARENT");
+    lines.push("END:VEVENT");
+  });
+
+  // Auto-merge offline exam schedule (CAT-1, CAT-2, FAT) into phone calendar export
+  const examList = cachedExamData?.exams || [];
+  examList.forEach((ex, eIdx) => {
+    const dtStart = formatIcsDate(ex.date);
+    const dtEnd = getNextDateIcs(ex.date);
+    if (!dtStart || !dtEnd) return;
+
+    const summary = `📝 [${ex.examType || "Exam"}] ${ex.courseCode} - ${ex.courseTitle}`;
+    const descLines = [
+      `Course: ${ex.courseCode} - ${ex.courseTitle}`,
+      `Exam: ${ex.rawExamType || ex.examType}`,
+      `Room / Venue: ${ex.venue || "TBA"}`,
+      `Seat Location: ${ex.seat || "TBA"}`,
+      `Time: ${ex.time || "TBA"}`
+    ];
+    if (ex.slot) descLines.push(`Slot: ${ex.slot}`);
+    descLines.push("Synced by VIT Companion Offline Seat Finder");
+
+    const uid = `vitcal-exam-${ex.id || eIdx}@vitcompanion`;
+
+    lines.push("BEGIN:VEVENT");
+    lines.push(`UID:${uid}`);
+    lines.push(`DTSTAMP:${nowUtc}`);
+    lines.push(`DTSTART;VALUE=DATE:${dtStart}`);
+    lines.push(`DTEND;VALUE=DATE:${dtEnd}`);
+    lines.push(`SUMMARY:${escapeIcs(summary)}`);
+    lines.push(`LOCATION:${escapeIcs(ex.venue ? `${ex.venue} (Seat: ${ex.seat || "TBA"})` : "VIT Campus")}`);
+    lines.push(`DESCRIPTION:${escapeIcs(descLines.join("\n"))}`);
+    lines.push("STATUS:CONFIRMED");
+    lines.push("TRANSP:OPAQUE");
+    lines.push("BEGIN:VALARM");
+    lines.push("ACTION:DISPLAY");
+    lines.push(`DESCRIPTION:Exam Reminder: ${escapeIcs(ex.courseCode)} in ${escapeIcs(ex.venue || "TBA")} (Seat: ${escapeIcs(ex.seat || "TBA")})`);
+    lines.push("TRIGGER:-PT2H");
+    lines.push("END:VALARM");
     lines.push("END:VEVENT");
   });
 
@@ -2257,7 +3305,7 @@ async function renderAcademicCalendarDashboard(activeFilter = currentCalendarFil
     if (!d.eventDescription) d.eventDescription = d.label || "";
   });
 
-  lastUpdatedEl.textContent = `Last checked: ${formatCalendarTimestamp(calData.lastChecked || calData.lastUpdated)}`;
+  lastUpdatedEl.textContent = `Last synced: ${formatCalendarTimestamp(calData.lastUpdated || calData.lastChecked)}`;
   if (badgeEl) {
     badgeEl.textContent = activeSemName;
     badgeEl.style.display = "inline-block";
@@ -2821,6 +3869,9 @@ document.addEventListener("DOMContentLoaded", async () => {
   // --- Academic Calendar Dashboard Setup ---
   await renderAcademicCalendarDashboard();
 
+  // --- Exam Schedule & Seat Finder Dashboard Setup (Authoritative .db load) ---
+  await renderExamScheduleDashboard();
+
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area === "local") {
       if (changes[MARKS_STORAGE_KEY]) {
@@ -2831,6 +3882,9 @@ document.addEventListener("DOMContentLoaded", async () => {
       }
       if (changes[PERSONAL_EVENTS_STORAGE_KEY]) {
         renderAcademicCalendarDashboard();
+      }
+      if (changes[EXAM_SCHEDULE_STORAGE_KEY]) {
+        renderExamScheduleDashboard();
       }
     }
   });
@@ -3090,16 +4144,37 @@ document.addEventListener("DOMContentLoaded", async () => {
   if (exportDbBtn) {
     exportDbBtn.addEventListener("click", async () => {
       try {
-        const stored = await chrome.storage.local.get(MARKS_STORAGE_KEY);
-        let data = stored[MARKS_STORAGE_KEY];
-        if (!data && window.VITCM_DB?.loadMarksData) {
-          data = await window.VITCM_DB.loadMarksData();
+        let marksData = null;
+        if (window.VITCM_DB?.loadMarksData) {
+          marksData = await window.VITCM_DB.loadMarksData();
         }
-        if (!data || !data.semesters || Object.keys(data.semesters).length === 0) {
-          if (quickActionStatus) quickActionStatus.textContent = "No marks found to export. Sync marks first.";
-          return;
+        if (!marksData) {
+          const stored = await chrome.storage.local.get(MARKS_STORAGE_KEY);
+          marksData = stored[MARKS_STORAGE_KEY];
         }
-        const sqlText = window.VITCM_DB?.generateSqliteDump ? window.VITCM_DB.generateSqliteDump(data) : "";
+
+        // Include calendar, personal events, and exam schedule in .db export
+        let calData = null;
+        if (window.VITCM_DB?.loadCalendarData) {
+          calData = await window.VITCM_DB.loadCalendarData();
+        }
+        let peData = null;
+        if (window.VITCM_DB?.loadPersonalEvents) {
+          peData = await window.VITCM_DB.loadPersonalEvents();
+        }
+        let examData = null;
+        if (window.VITCM_DB?.loadExamSchedule) {
+          examData = await window.VITCM_DB.loadExamSchedule();
+        }
+
+        const fullDumpPayload = {
+          ...(marksData || {}),
+          calendar: calData,
+          personalEvents: peData,
+          exams: examData?.exams || []
+        };
+
+        const sqlText = window.VITCM_DB?.generateSqliteDump ? window.VITCM_DB.generateSqliteDump(fullDumpPayload) : "";
         if (!sqlText) {
           if (quickActionStatus) quickActionStatus.textContent = "Failed to generate database dump.";
           return;
@@ -3549,6 +4624,85 @@ document.addEventListener("DOMContentLoaded", async () => {
     });
   }
 
+  // --- Exam Schedule & Offline Seat Finder Listeners ---
+  const syncExamsBtn = document.getElementById("syncExamsBtn");
+  const syncExamsIcon = document.getElementById("syncExamsIcon");
+  const syncExamsBtnText = document.getElementById("syncExamsBtnText");
+  const toggleExamBtn = document.getElementById("toggleExamScheduleBtn");
+  const storedExamsPanel = document.getElementById("storedExamsPanel");
+  const storedExamsArrow = document.getElementById("storedExamsArrow");
+  const exportExamIcsBtn = document.getElementById("exportExamIcsBtn");
+  const copyExamScheduleBtn = document.getElementById("copyExamScheduleBtn");
+  const examCopyFormatSelect = document.getElementById("examCopyFormatSelect");
+  const examTabsContainer = document.getElementById("examTabsContainer");
+  const examSearchInput = document.getElementById("examSearchInput");
+
+  if (toggleExamBtn && storedExamsPanel) {
+    toggleExamBtn.addEventListener("click", () => {
+      const isHidden = storedExamsPanel.style.display === "none";
+      storedExamsPanel.style.display = isHidden ? "block" : "none";
+      if (storedExamsArrow) {
+        storedExamsArrow.textContent = isHidden ? "▲" : "▼";
+      }
+    });
+  }
+
+  if (syncExamsBtn) {
+    syncExamsBtn.addEventListener("click", async () => {
+      try {
+        if (syncExamsIcon) syncExamsIcon.classList.add("spin");
+        if (syncExamsBtnText) syncExamsBtnText.textContent = "Syncing...";
+        if (statusEl) statusEl.textContent = "Connecting to VTOP to extract Exam Schedule...";
+
+        // 1. Try sending background fetch message to active tab
+        const [vtab] = await chrome.tabs.query({ active: true, currentWindow: true });
+        let response = null;
+        if (vtab?.id) {
+          response = await chrome.tabs.sendMessage(vtab.id, { message: "fetch_exam_schedule" }).catch(() => null);
+        }
+
+        // 2. If active tab is not on VTOP, find any open VTOP tab across windows
+        if (!response?.ok) {
+          const vtopTabs = await chrome.tabs.query({ url: "*://vtopcc.vit.ac.in/*" });
+          if (vtopTabs.length > 0) {
+            response = await chrome.tabs.sendMessage(vtopTabs[0].id, { message: "fetch_exam_schedule" }).catch(() => null);
+          }
+        }
+
+        if (response?.ok && Array.isArray(response.exams) && response.exams.length > 0) {
+          const payload = {
+            lastSynced: Date.now(),
+            semesterName: response.semesterName || response.semName || "Exam Schedule",
+            exams: response.exams
+          };
+          await chrome.storage.local.set({ [EXAM_SCHEDULE_STORAGE_KEY]: payload });
+          if (window.VITCM_DB?.saveExamSchedule) {
+            await window.VITCM_DB.saveExamSchedule(payload);
+          }
+          cachedExamData = payload;
+          await renderExamScheduleDashboard();
+          if (statusEl) statusEl.textContent = `🎉 Synced ${response.exams.length} exam(s) with venues and seat locations!`;
+        } else {
+          // If no VTOP tab has active session
+          if (statusEl) statusEl.textContent = "Please log into VTOP in any tab to auto-sync exams.";
+        }
+      } catch (err) {
+        if (statusEl) statusEl.textContent = "Sync failed: " + (err?.message || err);
+      } finally {
+        if (syncExamsIcon) syncExamsIcon.classList.remove("spin");
+        if (syncExamsBtnText) syncExamsBtnText.textContent = "Sync";
+      }
+    });
+  }
+
+  // Live listener for background exam schedule sync notifications
+  chrome.runtime.onMessage.addListener((msg) => {
+    if (msg?.type === "EXAM_SCHEDULE_UPDATED" && msg.data) {
+      cachedExamData = msg.data;
+      renderExamScheduleDashboard().catch(() => {});
+    }
+  });
+
   const calendarSelectedDayDetail = document.getElementById("calendarSelectedDayDetail");
   if (calendarSelectedDayDetail) {
     calendarSelectedDayDetail.addEventListener("click", async (e) => {
@@ -3576,5 +4730,151 @@ document.addEventListener("DOMContentLoaded", async () => {
       }
     });
   }
-});
 
+  // --- FAT Target & GPA Predictor Setup ---
+  const openFatBtn = document.getElementById("openFatPredictorBtn");
+  const closeFatBtn = document.getElementById("closeFatModalBtn");
+  const fatModal = document.getElementById("fatPredictorModal");
+  const fatCourseSelect = document.getElementById("fatCourseSelect");
+  const fatTabTargetBtn = document.getElementById("fatTabTargetBtn");
+  const fatTabGpaBtn = document.getElementById("fatTabGpaBtn");
+  const fatTargetTabPanel = document.getElementById("fatTargetTabPanel");
+  const fatGpaTabPanel = document.getElementById("fatGpaTabPanel");
+
+  if (openFatBtn) {
+    openFatBtn.addEventListener("click", openFatPredictorModal);
+  }
+
+  if (closeFatBtn) {
+    closeFatBtn.addEventListener("click", closeFatPredictorModal);
+  }
+
+  if (fatModal) {
+    fatModal.addEventListener("click", (e) => {
+      if (e.target === fatModal) {
+        closeFatPredictorModal();
+      }
+    });
+  }
+
+  if (fatTabTargetBtn && fatTabGpaBtn) {
+    fatTabTargetBtn.addEventListener("click", () => {
+      fatTabTargetBtn.classList.add("active");
+      fatTabGpaBtn.classList.remove("active");
+      if (fatTargetTabPanel) fatTargetTabPanel.style.display = "block";
+      if (fatGpaTabPanel) fatGpaTabPanel.style.display = "none";
+    });
+
+    fatTabGpaBtn.addEventListener("click", () => {
+      fatTabGpaBtn.classList.add("active");
+      fatTabTargetBtn.classList.remove("active");
+      if (fatGpaTabPanel) fatGpaTabPanel.style.display = "block";
+      if (fatTargetTabPanel) fatTargetTabPanel.style.display = "none";
+      renderGpaSimulator();
+    });
+  }
+
+  if (fatCourseSelect) {
+    fatCourseSelect.addEventListener("change", (e) => {
+      currentFatCourseKey = e.target.value;
+      const marksData = cachedMarksData || {};
+      const activeSemId = marksData.selectedSemesterId || marksData.currentSemesterId;
+      const semData = marksData.semesters?.[activeSemId];
+      const course = semData?.courses?.[currentFatCourseKey];
+      if (course) {
+        const code = (course.courseCode || "").trim().toUpperCase();
+        const subType = (course.subType || course.courseType || "").toLowerCase();
+        const isEmb = code.endsWith("E") || subType.includes("embedded");
+        currentFatCurvePreset = isEmb ? "tough" : "competitive";
+        currentFatCutoffs = { ...FAT_CURVE_PRESETS[currentFatCurvePreset].cutoffs };
+        currentFatCutoff = currentFatCutoffs[currentFatGrade] || (isEmb ? 76 : 82);
+        document.querySelectorAll(".fat-preset-btn").forEach((b) => {
+          b.classList.toggle("active", b.dataset.preset === currentFatCurvePreset);
+        });
+      }
+      populateComponentsForSelectedCourse();
+      updateFatPredictorDisplay();
+    });
+  }
+
+  // Component inputs live update
+  ["fatInputCat1", "fatInputCat2", "fatInputAssessments", "fatInputLab"].forEach((id) => {
+    const el = document.getElementById(id);
+    if (el) {
+      el.addEventListener("input", updateFatPredictorDisplay);
+      el.addEventListener("change", updateFatPredictorDisplay);
+    }
+  });
+
+  // Theory FAT weightage toggle buttons
+  document.querySelectorAll(".fat-wt-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      document.querySelectorAll(".fat-wt-btn").forEach((b) => b.classList.remove("active"));
+      btn.classList.add("active");
+      currentFatWeightage = parseInt(btn.dataset.wt, 10) || 40;
+      updateFatPredictorDisplay();
+    });
+  });
+
+  // Curve presets buttons
+  const presetsContainer = document.getElementById("fatPresetsContainer");
+  if (presetsContainer) {
+    presetsContainer.addEventListener("click", (e) => {
+      const btn = e.target.closest(".fat-preset-btn");
+      if (!btn) return;
+      presetsContainer.querySelectorAll(".fat-preset-btn").forEach((b) => b.classList.remove("active"));
+      btn.classList.add("active");
+      currentFatCurvePreset = btn.dataset.preset || "competitive";
+      currentFatCutoffs = { ...FAT_CURVE_PRESETS[currentFatCurvePreset].cutoffs };
+      currentFatCutoff = currentFatCutoffs[currentFatGrade] || currentFatCutoffs.S;
+      updateFatPredictorDisplay();
+    });
+  }
+
+  // Grade pills
+  const pillsContainer = document.getElementById("fatGradePillsContainer");
+  if (pillsContainer) {
+    pillsContainer.addEventListener("click", (e) => {
+      const btn = e.target.closest(".fat-grade-pill");
+      if (!btn) return;
+      pillsContainer.querySelectorAll(".fat-grade-pill").forEach((b) => b.classList.remove("active"));
+      btn.classList.add("active");
+      currentFatGrade = btn.dataset.grade || "S";
+      currentFatCutoff = currentFatCutoffs[currentFatGrade] || parseFloat(btn.dataset.cutoff) || 82;
+      updateFatPredictorDisplay();
+    });
+  }
+
+  // Custom cutoff input
+  const customCutoffInput = document.getElementById("fatCustomCutoffInput");
+  if (customCutoffInput) {
+    customCutoffInput.addEventListener("input", () => {
+      const val = parseFloat(customCutoffInput.value);
+      if (!isNaN(val) && val >= 30 && val <= 100) {
+        currentFatCutoff = val;
+        updateFatPredictorDisplay();
+      }
+    });
+  }
+
+  // Class average input
+  const classAvgInput = document.getElementById("fatClassAvgInput");
+  if (classAvgInput) {
+    classAvgInput.addEventListener("input", () => {
+      const mu = parseFloat(classAvgInput.value);
+      if (!isNaN(mu) && mu >= 20 && mu <= 95) {
+        const sigma = 10;
+        currentFatCutoffs = {
+          S: Math.min(95, Math.round(mu + 1.5 * sigma)),
+          A: Math.min(90, Math.round(mu + 0.5 * sigma)),
+          B: Math.min(80, Math.round(mu - 0.5 * sigma)),
+          C: Math.min(70, Math.round(mu - 1.0 * sigma)),
+          D: Math.min(60, Math.round(mu - 1.5 * sigma)),
+          E: 40
+        };
+        currentFatCutoff = currentFatCutoffs[currentFatGrade] || currentFatCutoffs.S;
+        updateFatPredictorDisplay();
+      }
+    });
+  }
+});

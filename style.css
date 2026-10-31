@@ -1904,3 +1904,1218 @@ html.opera-popup .portal-launcher {
   opacity: 0.9;
 }
 
+
+
+/* ========================================================
+   EXAM SCHEDULE & OFFLINE SEAT FINDER STYLES
+   ======================================================== */
+
+.exam-dashboard {
+  background: linear-gradient(180deg, var(--panel-2) 0%, var(--panel) 100%);
+  border-radius: 12px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.exam-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.exam-header-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.exam-header-icon {
+  font-size: 20px;
+  flex-shrink: 0;
+}
+
+.exam-title-wrap {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.exam-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
+  line-height: 1.2;
+}
+
+.exam-badge {
+  font-size: 9px;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 10px;
+  background: rgba(168, 85, 247, 0.2);
+  color: #c084fc;
+  border: 1px solid rgba(168, 85, 247, 0.4);
+}
+
+.exam-sub-text {
+  font-size: 10px;
+  color: var(--muted);
+  margin-top: 2px;
+  line-height: 1.2;
+}
+
+.exam-sync-btn {
+  background: rgba(168, 85, 247, 0.15);
+  border: 1px solid rgba(168, 85, 247, 0.35);
+  color: #d8b4fe;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 5px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  transition: all 0.15s ease;
+}
+
+.exam-sync-btn:hover {
+  background: rgba(168, 85, 247, 0.25);
+  border-color: rgba(168, 85, 247, 0.5);
+  color: #f3e8ff;
+}
+
+/* Exam Countdown & Hero Highlight */
+.exam-hero-box {
+  background: linear-gradient(135deg, rgba(30, 27, 75, 0.6) 0%, rgba(15, 23, 42, 0.8) 100%);
+  border: 1px solid rgba(168, 85, 247, 0.4);
+  border-radius: 10px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
+}
+
+.exam-hero-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.exam-hero-badge {
+  font-size: 9px;
+  font-weight: 800;
+  color: #a855f7;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+}
+
+.exam-hero-countdown {
+  font-size: 11px;
+  font-weight: 700;
+  color: #fbbf24;
+  background: rgba(245, 158, 11, 0.15);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.exam-hero-course {
+  font-size: 13px;
+  font-weight: 700;
+  color: #f1f5f9;
+  line-height: 1.3;
+}
+
+.exam-hero-meta {
+  font-size: 11px;
+  color: #94a3b8;
+}
+
+.exam-hero-location {
+  display: flex;
+  gap: 8px;
+  margin-top: 2px;
+}
+
+.hero-venue-chip,
+.hero-seat-chip {
+  flex: 1;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 6px;
+  padding: 6px 8px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.hero-venue-chip {
+  color: #38bdf8;
+  border-color: rgba(56, 189, 248, 0.35);
+  background: rgba(56, 189, 248, 0.1);
+}
+
+.hero-seat-chip {
+  color: #4ade80;
+  border-color: rgba(74, 222, 128, 0.35);
+  background: rgba(74, 222, 128, 0.1);
+}
+
+/* Controls & Filter Bar */
+.exam-controls-container {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.exam-filter-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.exam-tabs {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.exam-tab-btn {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 600;
+  padding: 4px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.exam-tab-btn.active,
+.exam-tab-btn:hover {
+  background: rgba(168, 85, 247, 0.2);
+  color: #d8b4fe;
+  border-color: rgba(168, 85, 247, 0.4);
+}
+
+.exam-search-input {
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 11px;
+  padding: 6px 8px;
+  outline: none;
+  width: 100%;
+  box-sizing: border-box;
+  font-family: inherit;
+  transition: border-color 0.15s ease;
+}
+
+.exam-search-input:focus {
+  border-color: #a855f7;
+}
+
+.exam-actions-row {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.exam-action-chip {
+  flex: 1;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 600;
+  padding: 5px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+
+.exam-action-chip:hover {
+  background: rgba(168, 85, 247, 0.2);
+  border-color: rgba(168, 85, 247, 0.4);
+  color: #d8b4fe;
+}
+
+.exam-copy-group {
+  display: flex;
+  flex: 1;
+  gap: 4px;
+}
+
+.exam-format-select {
+  background: #1e293b;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: #cbd5e1;
+  font-size: 10px;
+  font-weight: 600;
+  border-radius: 6px;
+  padding: 4px 6px;
+  outline: none;
+}
+
+/* Collapsible Exam Schedule */
+.exam-collapsible {
+  display: flex;
+  flex-direction: column;
+}
+
+.exam-accordion-btn {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: #e2e8f0;
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  cursor: pointer;
+  width: 100%;
+  box-sizing: border-box;
+  transition: background 0.15s ease;
+}
+
+.exam-accordion-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.stored-exams-panel {
+  margin-top: 6px;
+}
+
+.stored-exams-container {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 380px;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
+.empty-exam-hint {
+  font-size: 11px;
+  color: var(--muted);
+  text-align: center;
+  padding: 14px 8px;
+  line-height: 1.4;
+  margin: 0;
+}
+
+/* Exam Item Card */
+.exam-item-card {
+  background: var(--card, #131c2e);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  padding: 9px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  transition: transform 0.15s ease, border-color 0.15s ease;
+}
+
+.exam-item-card:hover {
+  border-color: rgba(168, 85, 247, 0.4);
+}
+
+.exam-item-card.is-today {
+  border-color: #fbbf24;
+  background: rgba(245, 158, 11, 0.08);
+}
+
+.exam-item-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 6px;
+}
+
+.exam-item-code {
+  font-size: 12px;
+  font-weight: 700;
+  color: #f1f5f9;
+}
+
+.exam-item-type-pill {
+  font-size: 9px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: rgba(168, 85, 247, 0.2);
+  color: #d8b4fe;
+  border: 1px solid rgba(168, 85, 247, 0.35);
+}
+
+.exam-item-title {
+  font-size: 11px;
+  color: #cbd5e1;
+  line-height: 1.3;
+}
+
+.exam-item-info {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 10px;
+  color: var(--muted);
+}
+
+.exam-loc-badges {
+  display: flex;
+  gap: 6px;
+  margin-top: 4px;
+  flex-wrap: wrap;
+}
+
+.exam-venue-pill,
+.exam-seat-pill {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 4px 8px;
+  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+  flex: 1 1 calc(50% - 6px);
+  min-width: 120px;
+  box-sizing: border-box;
+  justify-content: space-between;
+}
+
+.exam-venue-pill {
+  background: rgba(56, 189, 248, 0.15);
+  color: #38bdf8;
+  border: 1px solid rgba(56, 189, 248, 0.3);
+}
+
+.exam-seat-pill {
+  background: rgba(74, 222, 128, 0.15);
+  color: #4ade80;
+  border: 1px solid rgba(74, 222, 128, 0.3);
+}
+
+.exam-status-tag {
+  font-size: 9px;
+  font-weight: 600;
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+
+.exam-status-tag.today {
+  background: rgba(239, 68, 68, 0.2);
+  color: #f87171;
+  border: 1px solid rgba(239, 68, 68, 0.4);
+}
+
+.exam-status-tag.upcoming {
+  background: rgba(56, 189, 248, 0.2);
+  color: #7dd3fc;
+}
+
+.exam-status-tag.done {
+  background: rgba(255, 255, 255, 0.05);
+  color: #64748b;
+}
+
+/* ========================================================
+   FAT TARGET & GPA PREDICTOR STYLES
+   ======================================================== */
+
+.fat-predictor-btn {
+  background: rgba(16, 185, 129, 0.12) !important;
+  border-color: rgba(16, 185, 129, 0.3) !important;
+  color: #34d399 !important;
+}
+
+.fat-predictor-btn:hover {
+  background: rgba(16, 185, 129, 0.22) !important;
+  color: #6ee7b7 !important;
+}
+
+.fat-modal-content {
+  background: #0f172a;
+  border: 1px solid #1e293b;
+  border-radius: 12px;
+  padding: 14px;
+  width: 94%;
+  max-width: 440px;
+  max-height: 90vh;
+  overflow-y: auto;
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.5);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.fat-modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.fat-modal-title-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.fat-modal-title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 700;
+  color: #f1f5f9;
+}
+
+.fat-modal-subtitle {
+  font-size: 10px;
+  color: var(--muted);
+}
+
+.fat-tabs-bar {
+  display: flex;
+  gap: 6px;
+  border-bottom: 1px solid #1e293b;
+  padding-bottom: 8px;
+}
+
+.fat-tab-btn {
+  flex: 1;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  padding: 6px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.fat-tab-btn.active {
+  background: rgba(16, 185, 129, 0.2);
+  border-color: rgba(16, 185, 129, 0.4);
+  color: #34d399;
+}
+
+.fat-tab-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.fat-form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.fat-form-group label {
+  font-size: 10px;
+  font-weight: 600;
+  color: #94a3b8;
+}
+
+.fat-select {
+  background: #1e293b;
+  border: 1px solid #334155;
+  color: #f1f5f9;
+  border-radius: 6px;
+  padding: 6px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  outline: none;
+}
+
+.fat-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+}
+
+.fat-stat-card {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 6px;
+  padding: 6px;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.fat-stat-lbl {
+  font-size: 9px;
+  color: var(--muted);
+}
+
+.fat-stat-val {
+  font-size: 12px;
+  font-weight: 700;
+  color: #38bdf8;
+}
+
+.fat-stat-val.lost {
+  color: #f87171;
+}
+
+.fat-weightage-toggle {
+  display: flex;
+  gap: 2px;
+  justify-content: center;
+}
+
+.fat-wt-btn {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: var(--muted);
+  font-size: 9px;
+  font-weight: 700;
+  padding: 2px 5px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.fat-wt-btn.active {
+  background: #2563eb;
+  color: #fff;
+  border-color: #3b82f6;
+}
+
+.fat-grade-pills {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.fat-grade-pill {
+  flex: 1;
+  min-width: 50px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 700;
+  padding: 5px 6px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  text-align: center;
+}
+
+.fat-grade-pill.active {
+  background: rgba(16, 185, 129, 0.25);
+  border-color: #10b981;
+  color: #6ee7b7;
+}
+
+.fat-cutoff-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  background: rgba(255, 255, 255, 0.02);
+  padding: 6px 8px;
+  border-radius: 6px;
+  border: 1px dashed rgba(255, 255, 255, 0.1);
+}
+
+.fat-cutoff-row label {
+  font-size: 10px;
+  color: #94a3b8;
+}
+
+.fat-cutoff-input-wrap {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  color: var(--muted);
+}
+
+.fat-cutoff-input {
+  width: 48px;
+  background: #1e293b;
+  border: 1px solid #334155;
+  color: #f1f5f9;
+  border-radius: 4px;
+  padding: 3px 5px;
+  font-size: 11px;
+  font-weight: 700;
+  text-align: center;
+}
+
+/* Hero Result Card */
+.fat-result-card {
+  background: linear-gradient(135deg, rgba(16, 185, 129, 0.12) 0%, rgba(15, 23, 42, 0.6) 100%);
+  border: 1px solid rgba(16, 185, 129, 0.4);
+  border-radius: 8px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.fat-result-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.fat-result-badge {
+  font-size: 10px;
+  font-weight: 800;
+  color: #34d399;
+  letter-spacing: 0.5px;
+}
+
+.fat-feasibility-tag {
+  font-size: 9px;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.fat-feasibility-tag.feasible {
+  background: rgba(16, 185, 129, 0.2);
+  color: #34d399;
+  border: 1px solid rgba(16, 185, 129, 0.4);
+}
+
+.fat-feasibility-tag.moderate {
+  background: rgba(245, 158, 11, 0.2);
+  color: #fbbf24;
+  border: 1px solid rgba(245, 158, 11, 0.4);
+}
+
+.fat-feasibility-tag.high {
+  background: rgba(249, 115, 22, 0.2);
+  color: #fb923c;
+  border: 1px solid rgba(249, 115, 22, 0.4);
+}
+
+.fat-feasibility-tag.impossible {
+  background: rgba(239, 68, 68, 0.2);
+  color: #f87171;
+  border: 1px solid rgba(239, 68, 68, 0.4);
+}
+
+.fat-score-needed-wrap {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.fat-score-label {
+  font-size: 11px;
+  color: #94a3b8;
+}
+
+.fat-score-number {
+  font-size: 22px;
+  font-weight: 800;
+  color: #f1f5f9;
+  line-height: 1;
+}
+
+.fat-result-desc {
+  font-size: 10px;
+  color: #cbd5e1;
+  margin: 0;
+  line-height: 1.3;
+}
+
+.fat-pass-rule-note {
+  font-size: 9px;
+  color: #fbbf24;
+  background: rgba(245, 158, 11, 0.1);
+  border: 1px solid rgba(245, 158, 11, 0.25);
+  border-radius: 4px;
+  padding: 4px 6px;
+  line-height: 1.3;
+}
+
+/* Full Grade Matrix Table */
+.fat-matrix-section {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.fat-matrix-title {
+  font-size: 11px;
+  font-weight: 700;
+  color: #cbd5e1;
+  margin: 0;
+}
+
+.fat-table-wrapper {
+  overflow-x: auto;
+}
+
+.fat-matrix-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 10px;
+}
+
+.fat-matrix-table th {
+  background: #1e293b;
+  color: #94a3b8;
+  padding: 5px 6px;
+  text-align: left;
+  font-size: 9px;
+  font-weight: 700;
+}
+
+.fat-matrix-table td {
+  padding: 5px 6px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  color: #f1f5f9;
+}
+
+/* Simulator Styles */
+.gpa-summary-card {
+  background: linear-gradient(135deg, rgba(30, 41, 59, 0.7) 0%, rgba(15, 23, 42, 0.9) 100%);
+  border: 1px solid rgba(56, 189, 248, 0.3);
+  border-radius: 8px;
+  padding: 10px 12px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.gpa-summary-col {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.gpa-sum-lbl {
+  font-size: 10px;
+  color: #94a3b8;
+}
+
+.gpa-sum-val {
+  font-size: 20px;
+  font-weight: 800;
+  color: #38bdf8;
+  line-height: 1;
+}
+
+.gpa-sum-val.cgpa {
+  color: #a855f7;
+}
+
+.gpa-cgpa-display {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.gpa-delta-pill {
+  font-size: 9px;
+  font-weight: 700;
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: rgba(34, 197, 94, 0.15);
+  color: #4ade80;
+}
+
+.gpa-prior-box {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 6px;
+  padding: 8px;
+}
+
+.gpa-input-group {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.gpa-input-group label {
+  font-size: 9px;
+  color: var(--muted);
+}
+
+.gpa-num-input {
+  background: #1e293b;
+  border: 1px solid #334155;
+  color: #f1f5f9;
+  border-radius: 4px;
+  padding: 4px 6px;
+  font-size: 11px;
+  font-weight: 700;
+  outline: none;
+}
+
+.gpa-course-list-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.gpa-table-title {
+  font-size: 11px;
+  font-weight: 700;
+  color: #cbd5e1;
+  margin: 0;
+}
+
+.gpa-course-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 10px;
+}
+
+.gpa-course-table th {
+  background: #1e293b;
+  color: #94a3b8;
+  padding: 5px 6px;
+  text-align: left;
+  font-size: 9px;
+  font-weight: 700;
+}
+
+.gpa-course-table td {
+  padding: 5px 6px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  vertical-align: middle;
+}
+
+.gpa-credits-input {
+  width: 44px;
+  background: #1e293b;
+  border: 1px solid #334155;
+  color: #f1f5f9;
+  border-radius: 4px;
+  padding: 3px;
+  text-align: center;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.gpa-grade-select {
+  background: #1e293b;
+  border: 1px solid #334155;
+  color: #f1f5f9;
+  border-radius: 4px;
+  padding: 3px 4px;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+
+/* Relative Grading & Presets */
+.fat-course-type-pill {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 7px;
+  border-radius: 6px;
+  background: rgba(56, 189, 248, 0.15);
+  color: #38bdf8;
+  border: 1px solid rgba(56, 189, 248, 0.3);
+}
+
+.fat-curve-presets-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.fat-presets-row {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.fat-preset-btn {
+  flex: 1 1 calc(50% - 4px);
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 700;
+  padding: 5px 6px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.fat-preset-btn.active,
+.fat-preset-btn:hover {
+  background: rgba(16, 185, 129, 0.2);
+  border-color: rgba(16, 185, 129, 0.45);
+  color: #34d399;
+}
+
+/* FAT Component Breakdown Card */
+.fat-components-card {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.fat-components-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.fat-components-title {
+  font-size: 11px;
+  font-weight: 700;
+  color: #f1f5f9;
+}
+
+.fat-components-sub {
+  font-size: 9px;
+  color: var(--muted);
+}
+
+.fat-components-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 6px;
+}
+
+.fat-comp-item {
+  background: rgba(0, 0, 0, 0.2);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 6px;
+  padding: 6px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.fat-comp-label-wrap {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.fat-comp-name {
+  font-size: 10px;
+  font-weight: 600;
+  color: #cbd5e1;
+}
+
+.fat-comp-weightage {
+  font-size: 9px;
+  font-weight: 700;
+  color: #38bdf8;
+  background: rgba(56, 189, 248, 0.1);
+  padding: 1px 4px;
+  border-radius: 4px;
+}
+
+.fat-comp-input-wrap {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.fat-comp-input {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 4px;
+  color: #ffffff;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 3px 6px;
+  width: 60px;
+  outline: none;
+}
+
+.fat-comp-input:focus {
+  border-color: #38bdf8;
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.fat-comp-max {
+  font-size: 10px;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.fat-components-formula-note {
+  font-size: 9px;
+  color: #94a3b8;
+  background: rgba(168, 85, 247, 0.08);
+  border: 1px solid rgba(168, 85, 247, 0.2);
+  border-radius: 4px;
+  padding: 4px 6px;
+  line-height: 1.3;
+}
+
+/* FFCS Portal Dropdown Menu */
+.portal-dropdown-wrapper {
+  flex: 1;
+  position: relative;
+  display: flex;
+}
+
+.portal-dropdown-wrapper .portal-box {
+  width: 100%;
+}
+
+.portal-caret {
+  font-size: 10px;
+  opacity: 0.75;
+  margin-left: 2px;
+  display: inline-block;
+  transition: transform 0.2s ease;
+}
+
+.portal-dropdown-wrapper.open .portal-caret {
+  transform: rotate(180deg);
+}
+
+.portal-dropdown-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: -8px;
+  background: #0f172a;
+  border: 1px solid rgba(56, 189, 248, 0.4);
+  border-radius: 12px;
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.8), 0 0 15px rgba(56, 189, 248, 0.15);
+  padding: 8px;
+  z-index: 1000;
+  width: 236px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  animation: ffcsFadeInDown 0.18s ease-out;
+}
+
+.portal-dropdown-menu::before {
+  content: "";
+  position: absolute;
+  top: -6px;
+  left: 30px;
+  width: 10px;
+  height: 10px;
+  background: #0f172a;
+  border-left: 1px solid rgba(56, 189, 248, 0.4);
+  border-top: 1px solid rgba(56, 189, 248, 0.4);
+  transform: rotate(45deg);
+}
+
+@keyframes ffcsFadeInDown {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.portal-dropdown-header {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: #94a3b8;
+  padding: 2px 6px 4px 6px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  margin-bottom: 2px;
+}
+
+.portal-dropdown-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: rgba(30, 41, 59, 0.7);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  padding: 8px 10px;
+  cursor: pointer;
+  text-align: left;
+  color: #f8fafc;
+  transition: all 0.15s ease;
+  width: 100%;
+  box-sizing: border-box;
+  font-family: inherit;
+}
+
+.portal-dropdown-item:hover {
+  background: rgba(56, 189, 248, 0.15);
+  border-color: rgba(56, 189, 248, 0.4);
+  transform: translateY(-1px);
+}
+
+.portal-dropdown-item-icon {
+  font-size: 18px;
+  flex-shrink: 0;
+}
+
+.portal-dropdown-item-info {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.portal-dropdown-item-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: #f1f5f9;
+}
+
+.portal-dropdown-item-url {
+  font-size: 9.5px;
+  color: #94a3b8;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ffcs-links-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 2px;
+}
+
+.ffcs-link-sep {
+  color: var(--muted);
+  opacity: 0.6;
+}
