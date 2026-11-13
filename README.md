@@ -17,16 +17,16 @@ VIT Companion is a lightweight browser extension designed to speed up common stu
 - New automated functionality to scrape all marks and saved in db
 - Export all semester marks as Excel
 - Updated "Enhance Marks Page" to enhance for Embedded Courses and Online Courses
-  
+- Academic Calendar Scraper (latest semester), local save + display
+- Export as HTML to use in Phones
+- Export universal .ics calendar to add academic holidays, exams & personal events to phone calendar (iPhone / Android)
+- Personal Events & Deadlines planner with automatic semester date bounds
+
 ## Why This Project?
 
 Everytime I needed to access the College's website, the login page is the most time taking part. Thus, I made this self-hosted extension to quickly login especially during the time where the network traffic to the site is high.
 
 ## NEW!
-- Academic Calendar Scraper (latest semester), local save + display
-- Export as HTML to use in Phones
-- Export universal .ics calendar to add academic holidays, exams & personal events to phone calendar (iPhone / Android)
-- Personal Events & Deadlines planner with automatic semester date bounds
 - Custom box and tag color selection for "Exam / Quiz" personal events (hex picker & 8 color presets)
 - Manual Day Status Override: easily toggle any day between Working Day (with Day Order) and Holiday for sudden classes or rain holidays announced via email
 - Automatic Academic Calendar overlay highlighting upcoming CAT & FAT exam dates directly on the calendar grid and day details
