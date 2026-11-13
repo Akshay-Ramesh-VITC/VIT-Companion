@@ -25,4 +25,13 @@ Everytime I needed to access the College's website, the login page is the most t
 ## NEW!
 - Academic Calendar Scraper (latest semester), local save + display
 - Export as HTML to use in Phones
-
+- Export universal .ics calendar to add academic holidays, exams & personal events to phone calendar (iPhone / Android)
+- Personal Events & Deadlines planner with automatic semester date bounds
+- Custom box and tag color selection for "Exam / Quiz" personal events (hex picker & 8 color presets)
+- Manual Day Status Override: easily toggle any day between Working Day (with Day Order) and Holiday for sudden classes or rain holidays announced via email
+- Automatic Academic Calendar overlay highlighting upcoming CAT & FAT exam dates directly on the calendar grid and day details
+- Exam Schedule & Seat Finder with offline access, venue/hall lookup, and live next-exam countdown
+- Intelligent FAT Seat No. fallback when Seat Location is omitted or '-'
+- One-click exam schedule export (.ics for phones) and instant copy (WhatsApp format & Markdown table)
+- VTOP in-page navigation bar with instant SPA loading without full-page refresh
+- 🎯 FAT Target Calculator & GPA Simulator (calculates required FAT marks out of 100 for target grades and forecasts semester GPA/CGPA)

@@ -673,33 +673,40 @@ function escapeHtml(str) {
 // OFFLINE EXAM VENUE & SEAT FINDER LOGIC
 // ========================================================
 
-async function getStoredExamSchedule() {
-  if (cachedExamData && cachedExamData.exams && cachedExamData.exams.length > 0) {
+
+async function getStoredExamSchedule(forceRefresh = false) {
+  if (!forceRefresh && cachedExamData && cachedExamData.exams && cachedExamData.exams.length > 0) {
     return cachedExamData;
   }
 
-  let data = null;
-
-  // 1. Primary storage: Load from .db (IndexedDB)
+  let dbData = null;
   if (window.VITCM_DB?.loadExamSchedule) {
     try {
-      const idbData = await window.VITCM_DB.loadExamSchedule();
-      if (idbData && Array.isArray(idbData.exams) && idbData.exams.length > 0) {
-        data = idbData;
-      }
+      dbData = await window.VITCM_DB.loadExamSchedule();
     } catch (_idbErr) {}
   }
 
-  // 2. Secondary fallback check in chrome.storage.local
-  if (!data || !data.exams || data.exams.length === 0) {
+  let storageData = null;
+  try {
     const res = await chrome.storage.local.get(EXAM_SCHEDULE_STORAGE_KEY);
-    if (res[EXAM_SCHEDULE_STORAGE_KEY]) {
-      data = res[EXAM_SCHEDULE_STORAGE_KEY];
-      // Save directly into .db so .db remains the primary source
-      if (window.VITCM_DB?.saveExamSchedule) {
-        await window.VITCM_DB.saveExamSchedule(data);
-      }
+    storageData = res[EXAM_SCHEDULE_STORAGE_KEY] || null;
+  } catch (_stErr) {}
+
+  // Determine the newest data between .db and chrome.storage.local by lastSynced timestamp
+  let data = null;
+  const dbTime = Number(dbData?.lastSynced) || 0;
+  const storageTime = Number(storageData?.lastSynced) || 0;
+
+  if (storageData && storageTime >= dbTime && Array.isArray(storageData.exams) && storageData.exams.length > 0) {
+    data = storageData;
+    if (window.VITCM_DB?.saveExamSchedule) {
+      window.VITCM_DB.saveExamSchedule(data).catch(() => {});
     }
+  } else if (dbData && Array.isArray(dbData.exams) && dbData.exams.length > 0) {
+    data = dbData;
+    chrome.storage.local.set({ [EXAM_SCHEDULE_STORAGE_KEY]: data }).catch(() => {});
+  } else {
+    data = (storageTime >= dbTime ? storageData : dbData) || storageData || dbData || null;
   }
 
   // 3. Purge any table header rows while preserving real exams
@@ -722,6 +729,17 @@ async function getStoredExamSchedule() {
     }
   }
 
+  if (data && Array.isArray(data.exams)) {
+    data.exams.forEach((ex) => {
+      const isInv = (v) => !v || v === "-" || v === "--" || String(v).trim().toLowerCase() === "nil" || String(v).trim().toLowerCase() === "tba";
+      if (isInv(ex.seat) || isInv(ex.seatLocation)) {
+        if (!isInv(ex.seatNo)) {
+          ex.seat = ex.seatNo;
+          ex.seatLocation = ex.seatNo;
+        }
+      }
+    });
+  }
   cachedExamData = data || { exams: [], lastSynced: 0, semesterName: "", semesterId: "" };
   return cachedExamData;
 }
@@ -782,7 +800,7 @@ function generateExamScheduleIcs(examData) {
       `Course: ${ex.courseCode} - ${ex.courseTitle}`,
       `Exam Type: ${ex.rawExamType || ex.examType}`,
       `Venue / Room: ${ex.venue || "TBA"}`,
-      `Seat Location: ${ex.seat || "TBA"}`,
+      `Seat Location: ${resolveExamSeat(ex)}`,
       `Timing: ${ex.time || "TBA"}`
     ];
     if (ex.slot) descLines.push(`Slot: ${ex.slot}`);
@@ -828,7 +846,20 @@ async function renderExamScheduleDashboard(activeFilter = currentExamFilter, sea
   currentExamFilter = activeFilter;
   currentExamSearch = searchQuery;
 
-  const examData = await getStoredExamSchedule();
+  // Synchronize UI filter tab buttons
+  const tabsContainer = document.getElementById("examTabsContainer");
+  if (tabsContainer) {
+    tabsContainer.querySelectorAll(".exam-tab-btn").forEach((b) => {
+      b.classList.toggle("active", (b.dataset.examFilter || "all") === currentExamFilter);
+    });
+  }
+
+  const examSearchEl = document.getElementById("examSearchInput");
+  if (examSearchEl && examSearchEl.value !== currentExamSearch) {
+    examSearchEl.value = currentExamSearch;
+  }
+
+  const examData = await getStoredExamSchedule(true);
   const allExams = examData?.exams || [];
 
   if (allExams.length === 0) {
@@ -847,7 +878,6 @@ async function renderExamScheduleDashboard(activeFilter = currentExamFilter, sea
     badgeEl.textContent = examData.semesterName || "Exam Schedule";
     badgeEl.style.display = "inline-block";
   }
-  if (countEl) countEl.textContent = String(allExams.length);
 
   // Compute Next Upcoming Exam Countdown
   const todayStr = new Date().toISOString().slice(0, 10);
@@ -888,7 +918,7 @@ async function renderExamScheduleDashboard(activeFilter = currentExamFilter, sea
         heroVenue.innerHTML = `<span class="chip-icon">📍</span><span class="chip-val">Venue: <strong>${escapeHtml(nextEx.venue || "TBA")}</strong></span>`;
       }
       if (heroSeat) {
-        heroSeat.innerHTML = `<span class="chip-icon">🪑</span><span class="chip-val">Seat: <strong>${escapeHtml(nextEx.seat || "TBA")}</strong></span>`;
+        heroSeat.innerHTML = `<span class="chip-icon">🪑</span><span class="chip-val">Seat: <strong>${escapeHtml(resolveExamSeat(nextEx))}</strong></span>`;
       }
     } else {
       heroBox.style.display = "flex";
@@ -906,19 +936,41 @@ async function renderExamScheduleDashboard(activeFilter = currentExamFilter, sea
   if (activeFilter === "upcoming") {
     filtered = upcomingExams;
   } else if (activeFilter === "cat1") {
-    filtered = allExams.filter((e) => e.examType === "CAT-1");
+    filtered = allExams.filter((e) => {
+      const t = (e.examType || "").toLowerCase();
+      const raw = (e.rawExamType || "").toLowerCase();
+      const isCat2 = t.includes("cat-2") || t.includes("cat 2") || t.includes("cat2") || t.includes("cat-ii") || t.includes("cat ii") || t.includes("assessment test - ii") || t.includes("assessment test ii") || raw.includes("cat-2") || raw.includes("cat 2") || raw.includes("cat2") || raw.includes("cat-ii") || raw.includes("cat ii") || raw.includes("assessment test - ii") || raw.includes("assessment test ii");
+      if (isCat2) return false;
+      return t === "cat-1" || t === "cat1" || t.includes("cat 1") || t.includes("cat-i") || t.includes("cat i") || t.includes("assessment test - i") || t.includes("assessment test i") || raw.includes("cat 1") || raw.includes("cat-1") || raw.includes("cat-i") || raw.includes("cat i") || raw.includes("assessment test - i") || raw.includes("assessment test i");
+    });
   } else if (activeFilter === "cat2") {
-    filtered = allExams.filter((e) => e.examType === "CAT-2");
+    filtered = allExams.filter((e) => {
+      const t = (e.examType || "").toLowerCase();
+      const raw = (e.rawExamType || "").toLowerCase();
+      return t === "cat-2" || t === "cat2" || t.includes("cat 2") || t.includes("cat-ii") || t.includes("cat ii") || t.includes("assessment test - ii") || t.includes("assessment test ii") || raw.includes("cat 2") || raw.includes("cat-2") || raw.includes("cat2") || raw.includes("cat-ii") || raw.includes("cat ii") || raw.includes("assessment test - ii") || raw.includes("assessment test ii");
+    });
   } else if (activeFilter === "fat") {
-    filtered = allExams.filter((e) => e.examType === "FAT" || e.examType === "Lab FAT");
+    filtered = allExams.filter((e) => {
+      const t = (e.examType || "").toLowerCase();
+      const raw = (e.rawExamType || "").toLowerCase();
+      return t.includes("fat") || t.includes("final") || t.includes("terminal") || raw.includes("fat") || raw.includes("final") || raw.includes("terminal");
+    });
   }
 
   if (searchQuery && searchQuery.trim()) {
     const q = searchQuery.toLowerCase().trim();
     filtered = filtered.filter((e) => {
-      const hay = `${e.courseCode} ${e.courseTitle} ${e.venue} ${e.seat} ${e.date} ${e.rawDate} ${e.examType}`.toLowerCase();
+      const hay = `${e.courseCode || ""} ${e.courseTitle || ""} ${e.venue || ""} ${e.seat || ""} ${e.date || ""} ${e.rawDate || ""} ${e.time || ""} ${e.slot || ""} ${e.examType || ""} ${e.rawExamType || ""}`.toLowerCase();
       return hay.includes(q);
     });
+  }
+
+  if (countEl) {
+    if (filtered.length !== allExams.length) {
+      countEl.textContent = `${filtered.length} of ${allExams.length}`;
+    } else {
+      countEl.textContent = String(allExams.length);
+    }
   }
 
   if (containerEl) {
@@ -963,7 +1015,7 @@ async function renderExamScheduleDashboard(activeFilter = currentExamFilter, sea
               <span>📍 Room:</span> <strong>${escapeHtml(ex.venue || "TBA")}</strong>
             </div>
             <div class="exam-seat-pill" title="Seat Location">
-              <span>🪑 Seat:</span> <strong>${escapeHtml(ex.seat || "TBA")}</strong>
+              <span>🪑 Seat:</span> <strong>${escapeHtml(resolveExamSeat(ex))}</strong>
             </div>
           </div>
         </div>
@@ -1756,6 +1808,28 @@ async function renderStoredMarksDashboard() {
 
 const CALENDAR_STORAGE_KEY = "vit_academic_calendar";
 const EXAM_SCHEDULE_STORAGE_KEY = "vit_stored_exam_schedule";
+
+function resolveExamSeat(ex) {
+  if (!ex) return "TBA";
+  const isInvalid = (v) => !v || v === "-" || v === "--" || String(v).trim().toLowerCase() === "nil" || String(v).trim().toLowerCase() === "tba";
+  const seat = String(ex.seat || "").trim();
+  const seatLoc = String(ex.seatLocation || "").trim();
+  const seatNo = String(ex.seatNo || "").trim();
+  const isFat = (ex.examType || "").toUpperCase().includes("FAT") || (ex.rawExamType || "").toUpperCase().includes("FAT");
+
+  if (isFat) {
+    if (!isInvalid(seatLoc)) return seatLoc;
+    if (!isInvalid(seatNo)) return seatNo;
+    if (!isInvalid(seat)) return seat;
+    return "TBA";
+  }
+
+  if (!isInvalid(seat)) return seat;
+  if (!isInvalid(seatLoc)) return seatLoc;
+  if (!isInvalid(seatNo)) return seatNo;
+  return "TBA";
+}
+
 let cachedExamData = null;
 let currentExamFilter = "all";
 let currentExamSearch = "";
@@ -1795,7 +1869,61 @@ function getActiveCalendarRecord() {
 }
 
 const PERSONAL_EVENTS_STORAGE_KEY = "vit_calendar_personal_events";
+const DAY_OVERRIDES_STORAGE_KEY = "vit_calendar_day_overrides";
+
+function hexToRgba(hex, alpha = 0.25) {
+  if (!hex || typeof hex !== "string") return `rgba(239, 68, 68, ${alpha})`;
+  let c = hex.replace("#", "").trim();
+  if (c.length === 3) c = c.split("").map((x) => x + x).join("");
+  if (c.length !== 6) return `rgba(239, 68, 68, ${alpha})`;
+  const num = parseInt(c, 16);
+  const r = (num >> 16) & 255;
+  const g = (num >> 8) & 255;
+  const b = num & 255;
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
 let cachedPersonalEvents = [];
+
+let cachedDayOverrides = null;
+
+async function getDayOverrides() {
+  if (cachedDayOverrides) return cachedDayOverrides;
+  try {
+    const res = await chrome.storage.local.get(DAY_OVERRIDES_STORAGE_KEY);
+    cachedDayOverrides = res[DAY_OVERRIDES_STORAGE_KEY] || {};
+  } catch (_e) {
+    cachedDayOverrides = {};
+  }
+  return cachedDayOverrides;
+}
+
+async function saveDayOverride(date, status, dayOrder = "", reason = "") {
+  if (!date) return false;
+  const overrides = await getDayOverrides();
+  overrides[date] = {
+    date,
+    status, // "working" or "holiday"
+    dayOrder: status === "working" ? (dayOrder || "") : "",
+    reason: (reason || "").trim(),
+    updatedAt: Date.now()
+  };
+  cachedDayOverrides = overrides;
+  await chrome.storage.local.set({ [DAY_OVERRIDES_STORAGE_KEY]: overrides });
+  return true;
+}
+
+async function deleteDayOverride(date) {
+  if (!date) return false;
+  const overrides = await getDayOverrides();
+  if (overrides[date]) {
+    delete overrides[date];
+    cachedDayOverrides = overrides;
+    await chrome.storage.local.set({ [DAY_OVERRIDES_STORAGE_KEY]: overrides });
+  }
+  return true;
+}
+
 
 async function getPersonalEvents() {
   const res = await chrome.storage.local.get(PERSONAL_EVENTS_STORAGE_KEY);
@@ -1861,6 +1989,8 @@ function openPersonalEventModal(prefillDate = null, editEvent = null) {
   const catSelect = document.getElementById("eventCategorySelect");
   const timeInput = document.getElementById("eventTimeInput");
   const descInput = document.getElementById("eventDescInput");
+  const colorGroup = document.getElementById("eventColorGroup");
+  const colorInput = document.getElementById("eventColorInput");
 
   if (!modal) return;
 
@@ -1874,6 +2004,16 @@ function openPersonalEventModal(prefillDate = null, editEvent = null) {
     if (semEndDate) dateInput.max = semEndDate;
   }
 
+  const updateColorPickerVisibility = () => {
+    if (!colorGroup) return;
+    const isExam = catSelect && catSelect.value === "exam";
+    colorGroup.style.display = isExam ? "block" : "none";
+  };
+
+  if (catSelect) {
+    catSelect.onchange = updateColorPickerVisibility;
+  }
+
   if (editEvent) {
     if (modalTitle) modalTitle.textContent = "Edit Personal Event";
     if (editId) editId.value = editEvent.id || "";
@@ -1882,6 +2022,11 @@ function openPersonalEventModal(prefillDate = null, editEvent = null) {
     if (catSelect) catSelect.value = editEvent.category || "personal";
     if (timeInput) timeInput.value = editEvent.time || "";
     if (descInput) descInput.value = editEvent.description || "";
+    if (colorInput && editEvent.color) {
+      colorInput.value = editEvent.color;
+      const presets = document.querySelectorAll("#eventColorPresets .color-preset-btn");
+      presets.forEach(p => p.classList.toggle("active", p.dataset.color === editEvent.color));
+    }
   } else {
     if (modalTitle) modalTitle.textContent = "Add Personal Event";
     if (editId) editId.value = "";
@@ -1901,8 +2046,10 @@ function openPersonalEventModal(prefillDate = null, editEvent = null) {
     if (catSelect) catSelect.value = "personal";
     if (timeInput) timeInput.value = "";
     if (descInput) descInput.value = "";
+    if (colorInput) colorInput.value = "#ef4444";
   }
 
+  updateColorPickerVisibility();
   modal.style.display = "flex";
   if (titleInput) {
     setTimeout(() => titleInput.focus(), 50);
@@ -1973,11 +2120,13 @@ function showCalendarDayDetail(day) {
       <div class="cal-pe-wrap">
         <div class="cal-pe-header">
           <span class="cal-pe-title">📌 Personal Events (${dayPersonalEvents.length})</span>
-          <button type="button" class="btn-add-event-mini" data-action="add-pe" data-date="${escapeHtml(day.date)}">➕ Add More</button>
+          <div class="cal-detail-btn-row">
+            <button type="button" class="btn-override-day" data-action="override-day" data-date="${escapeHtml(day.date)}">⚡ Edit Day Status</button>
+            <button type="button" class="btn-add-event-mini" data-action="add-pe" data-date="${escapeHtml(day.date)}">➕ Add More</button>
         </div>
         <div class="cal-pe-list">
           ${dayPersonalEvents.map((pe) => `
-            <div class="cal-pe-item cat-${escapeHtml(pe.category || 'personal')}">
+            <div class="cal-pe-item cat-${escapeHtml(pe.category || 'personal')}" style="${pe.category === 'exam' && pe.color ? `background: ${hexToRgba(pe.color, 0.12)}; border-left: 3px solid ${pe.color};` : ''}">
               <div class="cal-pe-top">
                 <span class="cal-pe-name">${escapeHtml(pe.title)}</span>
                 <div class="cal-pe-actions">
@@ -1986,7 +2135,7 @@ function showCalendarDayDetail(day) {
                 </div>
               </div>
               <div class="cal-pe-meta">
-                <span class="cal-badge badge-${escapeHtml(pe.category || 'personal')}">${categoryLabels[pe.category] || "📌 Event"}</span>
+                <span class="cal-badge badge-${escapeHtml(pe.category || 'personal')}" style="${pe.category === 'exam' && pe.color ? `background: ${hexToRgba(pe.color, 0.28)}; color: ${pe.color}; border: 1px solid ${hexToRgba(pe.color, 0.5)};` : ''}">${categoryLabels[pe.category] || "📌 Event"}</span>
                 ${pe.time ? `<span>⏰ ${escapeHtml(pe.time)}</span>` : ""}
               </div>
               ${pe.description ? `<div class="cal-pe-desc">${escapeHtml(pe.description)}</div>` : ""}
@@ -2000,7 +2149,37 @@ function showCalendarDayDetail(day) {
       <div class="cal-pe-wrap">
         <div class="cal-pe-header">
           <span class="cal-pe-title">📌 Personal Events</span>
-          <button type="button" class="btn-add-event-mini" data-action="add-pe" data-date="${escapeHtml(day.date)}">➕ Add Event</button>
+          <div class="cal-detail-btn-row">
+            <button type="button" class="btn-override-day" data-action="override-day" data-date="${escapeHtml(day.date)}">⚡ Edit Day Status</button>
+            <button type="button" class="btn-add-event-mini" data-action="add-pe" data-date="${escapeHtml(day.date)}">➕ Add Event</button>
+        </div>
+      </div>
+    `;
+  }
+
+  let upcomingExamsHtml = "";
+  if (day.upcomingExams && day.upcomingExams.length > 0) {
+    upcomingExamsHtml = `
+      <div class="cal-upcoming-exams-wrap">
+        <div class="cal-upcoming-header">
+          <span>🎯 Upcoming Exam${day.upcomingExams.length > 1 ? "s" : ""} (${day.upcomingExams.length})</span>
+        </div>
+        <div class="cal-upcoming-list">
+          ${day.upcomingExams.map((ex) => `
+            <div class="cal-exam-card">
+              <div class="cal-exam-top">
+                <span class="cal-exam-type-badge">${escapeHtml(ex.examType || "EXAM")}</span>
+                <span class="cal-exam-code">${escapeHtml(ex.courseCode)}</span>
+                ${ex.slot ? `<span class="cal-exam-slot">Slot: ${escapeHtml(ex.slot)}</span>` : ""}
+              </div>
+              <div class="cal-exam-title">${escapeHtml(ex.courseTitle || "")}</div>
+              <div class="cal-exam-meta-row">
+                <span>⏰ ${escapeHtml(ex.time || "TBA")}</span>
+                <span>📍 Room: <strong>${escapeHtml(ex.venue || "TBA")}</strong></span>
+                <span>🪑 Seat: <strong>${escapeHtml(resolveExamSeat(ex))}</strong></span>
+              </div>
+            </div>
+          `).join("")}
         </div>
       </div>
     `;
@@ -2018,6 +2197,13 @@ function showCalendarDayDetail(day) {
         <span>Status: <strong>${escapeHtml(day.instructionalStatus || (day.isInstructional ? "Instructional Day" : "Non-Instructional Day"))}</strong></span>
         ${day.dayOrder ? `<span> · Timetable: <strong>${escapeHtml(day.dayOrder)} Day Order</strong></span>` : ""}
       </div>
+      ${day.isManualOverride ? `
+        <div class="cal-override-notice">
+          <span>⚡ <strong>Manual Override:</strong> ${escapeHtml(day.overrideReason || day.instructionalStatus)}</span>
+          <button type="button" class="btn-reset-override" data-action="reset-override" data-date="${escapeHtml(day.date)}">↺ Reset to VTOP</button>
+        </div>
+      ` : ''}
+      ${upcomingExamsHtml}
       ${peHtml}
     </div>
   `;
@@ -2085,7 +2271,15 @@ function renderCalendarMonthTable(activeRecord, monthKey) {
         let cellTypeClass = "";
         let tagHtml = "";
 
-        if (dayObj.isExam) {
+        if (dayObj.upcomingExams && dayObj.upcomingExams.length > 0) {
+          cellTypeClass = "cell-exam cell-upcoming-exam";
+          const firstEx = dayObj.upcomingExams[0];
+          const seatVal = resolveExamSeat(firstEx);
+          const seatStr = seatVal !== "TBA" ? ` (${seatVal})` : "";
+          const moreCount = dayObj.upcomingExams.length > 1 ? ` +${dayObj.upcomingExams.length - 1}` : "";
+          const shortTag = `📝 ${firstEx.examType || 'Exam'}: ${firstEx.courseCode}${moreCount}`;
+          tagHtml = `<span class="cell-tag tag-exam" title="${escapeHtml(dayObj.eventDescription || shortTag)}">${escapeHtml(shortTag)}</span>`;
+        } else if (dayObj.isExam) {
           cellTypeClass = "cell-exam";
           tagHtml = `<span class="cell-tag tag-exam" title="${escapeHtml(dayObj.eventDescription || 'Exam')}">📝 ${escapeHtml(dayObj.eventDescription || 'Exam')}</span>`;
         } else if (dayObj.dayOrder) {
@@ -2112,7 +2306,11 @@ function renderCalendarMonthTable(activeRecord, monthKey) {
           const firstPe = datePersonalEvents[0];
           const peCategoryClass = firstPe.category === "assignment" ? "tag-assignment" : (firstPe.category === "exam" ? "tag-exam-personal" : (firstPe.category === "reminder" ? "tag-reminder" : (firstPe.category === "club" ? "tag-club" : "tag-personal")));
           const moreCount = datePersonalEvents.length > 1 ? ` (+${datePersonalEvents.length - 1})` : "";
-          peTagHtml = `<span class="cell-tag ${peCategoryClass}" title="📌 ${escapeHtml(firstPe.title)}${moreCount}">📌 ${escapeHtml(firstPe.title)}${moreCount}</span>`;
+          let peCustomStyle = "";
+          if (firstPe.category === "exam" && firstPe.color) {
+            peCustomStyle = `style="background: ${hexToRgba(firstPe.color, 0.28)}; color: ${firstPe.color}; border: 1px solid ${hexToRgba(firstPe.color, 0.55)};"`;
+          }
+          peTagHtml = `<span class="cell-tag ${peCategoryClass}" ${peCustomStyle} title="📌 ${escapeHtml(firstPe.title)}${moreCount}">📌 ${escapeHtml(firstPe.title)}${moreCount}</span>`;
         }
 
         const todayPill = isToday ? '<span class="cell-today-pill">TODAY</span>' : "";
@@ -2120,7 +2318,7 @@ function renderCalendarMonthTable(activeRecord, monthKey) {
         const hasPeClass = datePersonalEvents.length > 0 ? "has-personal" : "";
 
         rowsHtml += `
-          <td class="cal-table-cell ${cellTypeClass} ${isToday ? 'cell-today' : ''} ${isSelected} ${hasPeClass}" data-date="${escapeHtml(dateStr)}">
+          <td class="cal-table-cell ${cellTypeClass} ${dayObj.isManualOverride ? 'cell-override' : ''} ${isToday ? 'cell-today' : ''} ${isSelected} ${hasPeClass}" data-date="${escapeHtml(dateStr)}" style="${datePersonalEvents[0]?.category === 'exam' && datePersonalEvents[0]?.color ? `box-shadow: inset 0 0 0 1.5px ${hexToRgba(datePersonalEvents[0].color, 0.5)};` : ''}">
             <div class="cell-top-row">
               <span class="cell-num">${dayCounter}</span>
               ${todayPill}
@@ -2140,9 +2338,30 @@ function renderCalendarMonthTable(activeRecord, monthKey) {
   tbody.innerHTML = rowsHtml;
 }
 
-function generateIcsCalendar(calData) {
+function generateIcsCalendar(calData, options = {}) {
   if (!calData || !Array.isArray(calData.days) || calData.days.length === 0) {
     return null;
+  }
+
+  const personalEvents = options.personalEvents || cachedPersonalEvents || [];
+  const examList = options.examList || cachedExamData?.exams || [];
+  const dayOverrides = options.dayOverrides || cachedDayOverrides || {};
+
+  if (dayOverrides && typeof dayOverrides === "object") {
+    calData.days.forEach((d) => {
+      if (dayOverrides[d.date]) {
+        const ovr = dayOverrides[d.date];
+        if (ovr.status === "working") {
+          d.isHoliday = false;
+          d.isInstructional = true;
+          d.dayOrder = ovr.dayOrder || null;
+        } else if (ovr.status === "holiday") {
+          d.isHoliday = true;
+          d.isInstructional = false;
+          d.dayOrder = null;
+        }
+      }
+    });
   }
 
   const escapeIcs = (str) => {
@@ -2250,7 +2469,7 @@ function generateIcsCalendar(calData) {
     lines.push("END:VEVENT");
   });
 
-  (cachedPersonalEvents || []).forEach((pe, pIdx) => {
+  (personalEvents || []).forEach((pe, pIdx) => {
     const dtStart = formatIcsDate(pe.date);
     const dtEnd = getNextDateIcs(pe.date);
     if (!dtStart || !dtEnd) return;
@@ -2278,8 +2497,7 @@ function generateIcsCalendar(calData) {
   });
 
   // Auto-merge offline exam schedule (CAT-1, CAT-2, FAT) into phone calendar export
-  const examList = cachedExamData?.exams || [];
-  examList.forEach((ex, eIdx) => {
+  (examList || []).forEach((ex, eIdx) => {
     const dtStart = formatIcsDate(ex.date);
     const dtEnd = getNextDateIcs(ex.date);
     if (!dtStart || !dtEnd) return;
@@ -2319,20 +2537,93 @@ function generateIcsCalendar(calData) {
   return lines.join("\r\n");
 }
 
-function generateMobileHtmlCalendar(calData) {
+function generateMobileHtmlCalendar(calData, options = {}) {
   if (!calData || !Array.isArray(calData.days) || calData.days.length === 0) {
     return null;
   }
 
   const semName = calData.semesterName || "VIT Academic Calendar";
-  const days = calData.days;
-  const icsString = generateIcsCalendar(calData) || "";
+  const days = calData.days.map((d) => ({ ...d }));
+
+  const personalEvents = options.personalEvents || cachedPersonalEvents || [];
+  const examList = options.examList || cachedExamData?.exams || [];
+  const dayOverrides = options.dayOverrides || cachedDayOverrides || {};
+
+  // 1. Apply day overrides
+  if (dayOverrides && typeof dayOverrides === "object") {
+    days.forEach((d) => {
+      if (dayOverrides[d.date]) {
+        const ovr = dayOverrides[d.date];
+        d.isManualOverride = true;
+        d.overrideReason = ovr.reason || "";
+        if (ovr.status === "working") {
+          d.isHoliday = false;
+          d.isSunday = false;
+          d.isInstructional = true;
+          d.instructional = true;
+          d.dayOrder = ovr.dayOrder || null;
+          d.instructionalStatus = ovr.dayOrder ? `${ovr.dayOrder} Day Order (Manual)` : "Instructional Class Day (Manual)";
+          d.eventDescription = ovr.reason ? `Class: ${ovr.reason}` : (ovr.dayOrder ? `Working Saturday (${ovr.dayOrder} Day Order)` : "Instructional Class Day");
+          d.category = "working";
+        } else if (ovr.status === "holiday") {
+          d.isHoliday = true;
+          d.isInstructional = false;
+          d.instructional = false;
+          d.dayOrder = null;
+          d.instructionalStatus = "Holiday (Manual)";
+          d.eventDescription = ovr.reason ? `Holiday: ${ovr.reason}` : "Holiday / Non-Instructional Day";
+          d.category = "holiday";
+        }
+      }
+    });
+  }
+
+  // 2. Map scheduled exams by date
+  const examsByDate = new Map();
+  if (Array.isArray(examList)) {
+    examList.forEach((ex) => {
+      if (!ex.date) return;
+      if (!examsByDate.has(ex.date)) examsByDate.set(ex.date, []);
+      examsByDate.get(ex.date).push({
+        id: ex.id,
+        courseCode: ex.courseCode || "",
+        courseTitle: ex.courseTitle || "",
+        examType: ex.examType || ex.rawExamType || "Exam",
+        slot: ex.slot || "",
+        time: ex.time || "",
+        session: ex.session || "",
+        venue: ex.venue || "",
+        seat: resolveExamSeat(ex)
+      });
+    });
+  }
+
+  // 3. Map personal events by date
+  const personalByDate = new Map();
+  if (Array.isArray(personalEvents)) {
+    personalEvents.forEach((pe) => {
+      if (!pe.date) return;
+      if (!personalByDate.has(pe.date)) personalByDate.set(pe.date, []);
+      personalByDate.get(pe.date).push(pe);
+    });
+  }
+
+  const icsString = generateIcsCalendar({ ...calData, days }, { personalEvents, examList, dayOverrides }) || "";
   const icsDataUri = "data:text/calendar;charset=utf-8," + encodeURIComponent(icsString);
 
   const monthsMap = new Map();
   const monthNames = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
 
   days.forEach((d) => {
+    const dayExams = examsByDate.get(d.date) || [];
+    if (dayExams.length > 0) {
+      d.scheduledExams = dayExams;
+      d.isExam = true;
+      if (!d.eventDescription || d.eventDescription === "Instructional Day" || d.eventDescription === "Scheduled Day") {
+        d.eventDescription = `Exam: ${dayExams.map((e) => `${e.slot ? `[${e.slot}] ` : ""}${e.courseCode || e.courseTitle}`).join(", ")}`;
+      }
+    }
+
     if (d.dayOrder || /day\s*order|working\s*saturday/i.test(`${d.eventDescription || ""} ${d.label || ""}`)) {
       d.isHoliday = false;
       d.isInstructional = true;
@@ -2353,9 +2644,8 @@ function generateMobileHtmlCalendar(calData) {
 
   const instructionalCount = days.filter((d) => d.isInstructional || d.instructional).length;
   const holidaysCount = days.filter((d) => d.isHoliday).length;
-  const eventsCount = days.filter((d) => d.isExam || d.isEvent || d.isFest).length;
+  const eventsCount = days.filter((d) => d.isExam || d.isEvent || d.isFest || (d.scheduledExams && d.scheduledExams.length > 0)).length;
   const dayOrdersCount = days.filter((d) => Boolean(d.dayOrder)).length;
-  const personalEvents = cachedPersonalEvents || [];
   const personalCount = personalEvents.length;
 
   let monthsHtml = "";
@@ -2399,12 +2689,22 @@ function generateMobileHtmlCalendar(calData) {
             instructionalStatus: (col === 0 || col === 6) ? "Non-Instructional Day" : "Instructional Day"
           };
 
+          const dateExams = examsByDate.get(dateStr) || day.scheduledExams || [];
+          const datePersonalEvents = personalByDate.get(dateStr) || [];
+
           let cellType = "cell-regular";
           let chip = "";
           let badgeText = "";
           let descText = day.eventDescription || "";
 
-          if (day.isExam) {
+          if (dateExams.length > 0) {
+            cellType = "cell-exam";
+            badgeText = `📝 Exam (${dateExams.length})`;
+            const ex0 = dateExams[0];
+            const examLabel = `${ex0.slot ? `[${ex0.slot}] ` : ""}${ex0.courseCode}`;
+            const moreExamCount = dateExams.length > 1 ? ` (+${dateExams.length - 1})` : "";
+            chip = `<span class="mob-chip chip-exam" title="📝 Exam: ${escapeHtml(ex0.courseTitle)} | Venue: ${escapeHtml(ex0.venue || 'TBA')} | Seat: ${escapeHtml(ex0.seat || 'TBA')}">📝 ${escapeHtml(examLabel)}${moreExamCount}</span>`;
+          } else if (day.isExam) {
             cellType = "cell-exam";
             chip = `<span class="mob-chip chip-exam" title="${escapeHtml(descText || 'Exam')}">📝 ${escapeHtml(descText || 'Exam')}</span>`;
             badgeText = "📝 Exam";
@@ -2428,19 +2728,35 @@ function generateMobileHtmlCalendar(calData) {
             badgeText = "📚 Class Day";
           }
 
-          // Personal events on this date
-          const datePersonalEvents = personalEvents.filter((e) => e.date === dateStr);
+          // Personal events chips with custom color
           let peChip = "";
+          let cellPeStyle = "";
           if (datePersonalEvents.length > 0) {
             const firstPe = datePersonalEvents[0];
+            let peCustomStyle = "";
+            if (firstPe.category === "exam" && firstPe.color) {
+              peCustomStyle = `style="background: ${hexToRgba(firstPe.color, 0.28)}; color: ${firstPe.color}; border: 1px solid ${hexToRgba(firstPe.color, 0.5)};"`;
+              cellPeStyle = `style="box-shadow: inset 0 0 0 1.5px ${hexToRgba(firstPe.color, 0.6)};"`;
+            }
             const catClass = firstPe.category === "assignment" ? "chip-assignment" : (firstPe.category === "exam" ? "chip-exam-pe" : (firstPe.category === "reminder" ? "chip-reminder" : (firstPe.category === "club" ? "chip-club" : "chip-personal")));
             const moreCount = datePersonalEvents.length > 1 ? ` (+${datePersonalEvents.length - 1})` : "";
-            peChip = `<span class="mob-chip ${catClass}" title="📌 ${escapeHtml(firstPe.title)}${moreCount}">📌 ${escapeHtml(firstPe.title)}${moreCount}</span>`;
+            peChip = `<span class="mob-chip ${catClass}" ${peCustomStyle} title="📌 ${escapeHtml(firstPe.title)}${moreCount}">📌 ${escapeHtml(firstPe.title)}${moreCount}</span>`;
           }
+
           const hasPeClass = datePersonalEvents.length > 0 ? "has-personal" : "";
+          const hasExamsClass = dateExams.length > 0 ? "has-exams" : "";
+          const overrideClass = day.isManualOverride ? "cell-override" : "";
 
           monthTableRows += `
-            <td class="mob-cell ${cellType} ${hasPeClass}" data-date="${escapeHtml(dateStr)}" data-day="${dayCounter}" data-title="${escapeHtml(descText || badgeText || 'Day ' + dayCounter)}" data-status="${escapeHtml(day.instructionalStatus || '')}" data-badge="${escapeHtml(badgeText)}" data-dayorder="${escapeHtml(day.dayOrder || '')}" data-pe="${escapeHtml(JSON.stringify(datePersonalEvents))}">
+            <td class="mob-cell ${cellType} ${hasPeClass} ${hasExamsClass} ${overrideClass}" ${cellPeStyle}
+                data-date="${escapeHtml(dateStr)}"
+                data-day="${dayCounter}"
+                data-title="${escapeHtml(descText || badgeText || 'Day ' + dayCounter)}"
+                data-status="${escapeHtml(day.instructionalStatus || '')}"
+                data-badge="${escapeHtml(badgeText)}"
+                data-dayorder="${escapeHtml(day.dayOrder || '')}"
+                data-exams="${escapeHtml(JSON.stringify(dateExams))}"
+                data-pe="${escapeHtml(JSON.stringify(datePersonalEvents))}">
               <div class="mob-cell-top">
                 <span class="mob-cell-num">${dayCounter}</span>
               </div>
@@ -2462,12 +2778,19 @@ function generateMobileHtmlCalendar(calData) {
       const dayNum = parts[2] || "01";
       const wk = (day.dayOfWeek || "").toUpperCase();
 
+      const dateExams = examsByDate.get(day.date) || day.scheduledExams || [];
+      const datePersonalEvents = personalByDate.get(day.date) || [];
+
       let cardType = "type-general";
       let badgeHtml = "";
       let titleText = "";
       const subText = day.instructionalStatus || "";
 
-      if (day.isExam) {
+      if (dateExams.length > 0) {
+        cardType = "type-exam";
+        badgeHtml = `<span class="badge badge-exam">📝 Exam (${dateExams.length})</span>`;
+        titleText = dateExams.map((e) => `${e.slot ? `[${e.slot}] ` : ""}${e.courseCode} - ${e.courseTitle}`).join(", ");
+      } else if (day.isExam) {
         cardType = "type-exam";
         badgeHtml = `<span class="badge badge-exam">📝 Exam</span>`;
         titleText = day.eventDescription || "Examination";
@@ -2491,28 +2814,59 @@ function generateMobileHtmlCalendar(calData) {
         titleText = day.eventDescription || day.instructionalStatus || "Scheduled Day";
       }
 
-      // Personal events on this card
-      const datePersonalEvents = personalEvents.filter((e) => e.date === day.date);
-      let peSectionHtml = "";
-      if (datePersonalEvents.length > 0) {
-        peSectionHtml = `
-          <div class="mob-pe-list">
-            ${datePersonalEvents.map((pe) => `
-              <div class="mob-pe-item">
-                <div class="mob-pe-title-row">
-                  <span class="mob-pe-name">📌 ${escapeHtml(pe.title)}</span>
-                  ${pe.time ? `<span class="mob-pe-time">⏰ ${escapeHtml(pe.time)}</span>` : ""}
+      // Scheduled Exams list
+      let examSectionHtml = "";
+      if (dateExams.length > 0) {
+        examSectionHtml = `
+          <div class="mob-exam-list">
+            ${dateExams.map((ex) => `
+              <div class="mob-exam-item">
+                <div class="mob-exam-title">
+                  <strong>${ex.slot ? `[${escapeHtml(ex.slot)}] ` : ""}${escapeHtml(ex.courseCode ? ex.courseCode + " - " : "")}${escapeHtml(ex.courseTitle)}</strong>
+                  <span class="badge badge-exam">${escapeHtml(ex.examType || "Exam")}</span>
                 </div>
-                ${pe.description ? `<div class="mob-pe-desc">${escapeHtml(pe.description)}</div>` : ""}
+                <div class="mob-exam-meta">
+                  ${ex.time ? `<span>⏰ ${escapeHtml(ex.time)}</span>` : ""}
+                  ${ex.venue ? `<span>📍 Room: <strong>${escapeHtml(ex.venue)}</strong></span>` : ""}
+                  ${ex.seat ? `<span>🪑 Seat: <strong>${escapeHtml(ex.seat)}</strong></span>` : ""}
+                </div>
               </div>
             `).join("")}
           </div>
         `;
       }
+
+      // Personal events list
+      let peSectionHtml = "";
+      if (datePersonalEvents.length > 0) {
+        peSectionHtml = `
+          <div class="mob-pe-list">
+            ${datePersonalEvents.map((pe) => {
+              const borderCol = (pe.category === "exam" && pe.color) ? pe.color : "#3b82f6";
+              const bgCol = (pe.category === "exam" && pe.color) ? hexToRgba(pe.color, 0.12) : "rgba(59, 130, 246, 0.1)";
+              return `
+                <div class="mob-pe-item" style="border-left-color: ${borderCol}; background: ${bgCol};">
+                  <div class="mob-pe-title-row">
+                    <span class="mob-pe-name" style="color: ${borderCol};">📌 ${escapeHtml(pe.title)}</span>
+                    ${pe.time ? `<span class="mob-pe-time">⏰ ${escapeHtml(pe.time)}</span>` : ""}
+                  </div>
+                  ${pe.description ? `<div class="mob-pe-desc">${escapeHtml(pe.description)}</div>` : ""}
+                </div>
+              `;
+            }).join("")}
+          </div>
+        `;
+      }
+
+      const examSearchStr = dateExams.map((ex) => `${ex.courseCode} ${ex.courseTitle} ${ex.venue} ${ex.seat} ${ex.slot} ${ex.examType}`).join(" ");
       const peSearchStr = datePersonalEvents.map((pe) => `${pe.title} ${pe.description || ""} ${pe.category || ""}`).join(" ");
 
       daysInMonthHtml += `
-        <div class="day-card ${cardType} ${datePersonalEvents.length > 0 ? 'has-personal' : ''}" data-type="${cardType}" data-has-personal="${datePersonalEvents.length > 0 ? 'true' : 'false'}" data-search="${escapeHtml((day.date + " " + wk + " " + titleText + " " + subText + " " + peSearchStr).toLowerCase())}">
+        <div class="day-card ${cardType} ${dateExams.length > 0 ? 'has-exams type-exam' : ''} ${datePersonalEvents.length > 0 ? 'has-personal' : ''}"
+             data-type="${cardType}"
+             data-has-exams="${dateExams.length > 0 ? 'true' : 'false'}"
+             data-has-personal="${datePersonalEvents.length > 0 ? 'true' : 'false'}"
+             data-search="${escapeHtml((day.date + " " + wk + " " + titleText + " " + subText + " " + examSearchStr + " " + peSearchStr).toLowerCase())}">
           <div class="date-col">
             <span class="date-num">${escapeHtml(dayNum)}</span>
             <span class="date-wk">${escapeHtml(wk)}</span>
@@ -2523,6 +2877,7 @@ function generateMobileHtmlCalendar(calData) {
               ${badgeHtml}
             </div>
             ${subText ? `<span class="day-sub">${escapeHtml(subText)}</span>` : ""}
+            ${examSectionHtml}
             ${peSectionHtml}
           </div>
         </div>
@@ -2800,10 +3155,16 @@ function generateMobileHtmlCalendar(calData) {
       background: rgba(255, 255, 255, 0.02);
     }
     .mob-cell.selected-cell {
-      box-shadow: inset 0 0 0 2px #38bdf8;
+      box-shadow: inset 0 0 0 2px #38bdf8 !important;
     }
     .mob-cell.has-personal {
       border-bottom: 2px solid #3b82f6;
+    }
+    .mob-cell.has-exams {
+      border-top: 2px solid #a855f7;
+    }
+    .mob-cell.cell-override {
+      box-shadow: inset 0 0 0 1px #38bdf8;
     }
     .mob-cell-top {
       display: flex;
@@ -2877,6 +3238,47 @@ function generateMobileHtmlCalendar(calData) {
       cursor: pointer;
       padding: 0 4px;
     }
+    .mob-detail-section-title {
+      font-size: 11px;
+      font-weight: 700;
+      color: #93c5fd;
+      margin: 8px 0 4px;
+    }
+    .mob-exam-list {
+      margin-top: 6px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      border-top: 1px dashed rgba(168, 85, 247, 0.3);
+      padding-top: 5px;
+    }
+    .mob-exam-item {
+      font-size: 11px;
+      background: rgba(168, 85, 247, 0.12);
+      border-left: 3px solid #a855f7;
+      padding: 5px 8px;
+      border-radius: 4px;
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+    }
+    .mob-exam-title {
+      color: #e9d5ff;
+      font-size: 11.5px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+    .mob-exam-meta {
+      font-size: 10px;
+      color: #c084fc;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+    }
     .month-section {
       margin-bottom: 14px;
     }
@@ -2924,6 +3326,9 @@ function generateMobileHtmlCalendar(calData) {
     }
     .day-card.has-personal {
       border-left: 3px solid #3b82f6;
+    }
+    .day-card.has-exams {
+      border-top: 2px solid #a855f7;
     }
     .date-col {
       display: flex;
@@ -3008,7 +3413,7 @@ function generateMobileHtmlCalendar(calData) {
       <button type="button" class="view-btn active" id="mobViewTableBtn">🗓️ Calendar Table</button>
       <button type="button" class="view-btn" id="mobViewListBtn">📑 Detailed List</button>
     </div>
-    <input type="text" id="mobileSearch" class="search-box" placeholder="🔍 Search event, holiday, day order, date..." />
+    <input type="text" id="mobileSearch" class="search-box" placeholder="🔍 Search exam, course (e.g. CSE), room (e.g. SJT), event, date..." />
     <div class="tabs-bar">
       <button class="tab-btn active" data-filter="all">All (${days.length})</button>
       <button class="tab-btn" data-filter="type-holiday">🏖️ Holidays (${holidaysCount})</button>
@@ -3027,6 +3432,7 @@ function generateMobileHtmlCalendar(calData) {
     </div>
     <div id="mobDetailDesc" class="mob-detail-desc"></div>
     <div id="mobDetailStatus" class="mob-detail-sub"></div>
+    <div id="mobDetailExams" style="display: none;"></div>
     <div id="mobDetailPersonalEvents" style="display: none;"></div>
   </div>
 
@@ -3049,6 +3455,7 @@ function generateMobileHtmlCalendar(calData) {
       var detailBadge = document.getElementById('mobDetailBadge');
       var detailDesc = document.getElementById('mobDetailDesc');
       var detailStatus = document.getElementById('mobDetailStatus');
+      var detailExams = document.getElementById('mobDetailExams');
       var detailPe = document.getElementById('mobDetailPersonalEvents');
 
       function setView(view) {
@@ -3082,6 +3489,7 @@ function generateMobileHtmlCalendar(calData) {
           var status = cell.getAttribute('data-status');
           var badge = cell.getAttribute('data-badge');
           var dayOrder = cell.getAttribute('data-dayorder');
+          var examsRaw = cell.getAttribute('data-exams');
           var peRaw = cell.getAttribute('data-pe');
 
           if (detailDate) detailDate.textContent = date;
@@ -3103,17 +3511,42 @@ function generateMobileHtmlCalendar(calData) {
             detailStatus.textContent = subParts.join(' · ');
           }
 
+          if (detailExams) {
+            var examItems = [];
+            try { if (examsRaw) examItems = JSON.parse(examsRaw); } catch(e) {}
+            if (examItems && examItems.length > 0) {
+              detailExams.style.display = 'block';
+              detailExams.innerHTML = '<div class="mob-detail-section-title">📝 Scheduled Exams (' + examItems.length + '):</div>' +
+                examItems.map(function(ex) {
+                  var seatStr = ex.seat ? '🪑 Seat: <strong>' + ex.seat + '</strong>' : '';
+                  var venueStr = ex.venue ? '📍 Room: <strong>' + ex.venue + '</strong>' : '';
+                  var timeStr = ex.time ? '⏰ ' + ex.time : '';
+                  var meta = [timeStr, venueStr, seatStr].filter(Boolean).join(' · ');
+                  return '<div class="mob-exam-item">' +
+                    '<div class="mob-exam-title"><strong>' + (ex.slot ? '[' + ex.slot + '] ' : '') + (ex.courseCode ? ex.courseCode + ' - ' : '') + ex.courseTitle + '</strong>' + (ex.examType ? ' <span class="badge badge-exam">' + ex.examType + '</span>' : '') + '</div>' +
+                    (meta ? '<div class="mob-exam-meta">' + meta + '</div>' : '') +
+                  '</div>';
+                }).join('');
+            } else {
+              detailExams.style.display = 'none';
+              detailExams.innerHTML = '';
+            }
+          }
+
           if (detailPe) {
             var peItems = [];
             try { if (peRaw) peItems = JSON.parse(peRaw); } catch(e) {}
             if (peItems && peItems.length > 0) {
               detailPe.style.display = 'block';
-              detailPe.innerHTML = '<div style="font-size:11px;font-weight:700;color:#93c5fd;margin:8px 0 3px;">📌 Personal Events:</div>' +
+              detailPe.innerHTML = '<div class="mob-detail-section-title">📌 Personal Events (' + peItems.length + '):</div>' +
                 peItems.map(function(p) {
-                  return '<div style="font-size:11px;background:rgba(59,130,246,0.15);padding:4px 6px;border-radius:4px;margin-bottom:3px;border-left:2px solid #3b82f6;"><strong>' +
-                    (p.title || '') + '</strong>' +
-                    (p.time ? ' (⏰ ' + p.time + ')' : '') +
-                    (p.description ? ' - ' + p.description : '') +
+                  var borderCol = (p.category === 'exam' && p.color) ? p.color : '#3b82f6';
+                  return '<div class="mob-pe-item" style="border-left-color: ' + borderCol + ';">' +
+                    '<div class="mob-pe-title-row">' +
+                      '<span class="mob-pe-name" style="color:' + borderCol + ';">📌 ' + (p.title || '') + '</span>' +
+                      (p.time ? '<span class="mob-pe-time">⏰ ' + p.time + '</span>' : '') +
+                    '</div>' +
+                    (p.description ? '<div class="mob-pe-desc">' + p.description + '</div>' : '') +
                   '</div>';
                 }).join('');
             } else {
@@ -3140,7 +3573,9 @@ function generateMobileHtmlCalendar(calData) {
           var visibleInMonth = 0;
           cards.forEach(function(card) {
             var matchesType = (currentFilter === 'all') ||
-              (currentFilter === 'type-personal' ? card.getAttribute('data-has-personal') === 'true' : card.classList.contains(currentFilter));
+              (currentFilter === 'type-personal' ? card.getAttribute('data-has-personal') === 'true' :
+              (currentFilter === 'type-exam' ? (card.classList.contains('type-exam') || card.getAttribute('data-has-exams') === 'true') :
+              card.classList.contains(currentFilter)));
             var matchesSearch = !query || card.getAttribute('data-search').indexOf(query) !== -1;
             if (matchesType && matchesSearch) {
               card.classList.remove('hidden');
@@ -3176,7 +3611,7 @@ function generateMobileHtmlCalendar(calData) {
         });
       }
     })();
-  <\/script>
+  </script>
 </body>
 </html>`;
 }
@@ -3254,6 +3689,116 @@ async function renderAcademicCalendarDashboard(activeFilter = currentCalendarFil
 
   const activeRecord = calData;
   const days = calData.days || [];
+  // Apply manual day overrides (e.g. sudden working day or holiday via email)
+  try {
+    const dayOverrides = await getDayOverrides();
+    days.forEach((d) => {
+      if (dayOverrides[d.date]) {
+        const ovr = dayOverrides[d.date];
+        d.isManualOverride = true;
+        d.overrideReason = ovr.reason || "";
+        if (ovr.status === "working") {
+          d.isHoliday = false;
+          d.isSunday = false;
+          d.isInstructional = true;
+          d.instructional = true;
+          d.dayOrder = ovr.dayOrder || null;
+          d.instructionalStatus = ovr.dayOrder ? `${ovr.dayOrder} Day Order (Manual)` : "Instructional Class Day (Manual)";
+          d.eventDescription = ovr.reason ? `Class: ${ovr.reason}` : (ovr.dayOrder ? `Working Saturday (${ovr.dayOrder} Day Order)` : "Instructional Class Day");
+          d.category = "working";
+        } else if (ovr.status === "holiday") {
+          d.isHoliday = true;
+          d.isInstructional = false;
+          d.instructional = false;
+          d.dayOrder = null;
+          d.instructionalStatus = "Holiday (Manual)";
+          d.eventDescription = ovr.reason ? `Holiday: ${ovr.reason}` : "Holiday / Non-Instructional Day";
+          d.category = "holiday";
+        }
+      }
+    });
+  } catch (_ovrErr) {
+    console.warn("Could not apply day overrides", _ovrErr);
+  }
+
+
+  // Automatically update the Academic calendar with upcoming exam dates
+  try {
+    const examData = await getStoredExamSchedule();
+    const storedExams = examData?.exams || [];
+    const now = new Date();
+    const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+
+    // Filter upcoming exam dates only
+    const upcomingExams = storedExams.filter((ex) => {
+      if (!ex.date) return false;
+      if (ex.timestamp && ex.timestamp < (Date.now() - 4 * 3600 * 1000) && ex.date < todayStr) {
+        return false;
+      }
+      return ex.date >= todayStr;
+    });
+
+    if (upcomingExams.length > 0) {
+      const examsByDate = new Map();
+      upcomingExams.forEach((ex) => {
+        if (!examsByDate.has(ex.date)) {
+          examsByDate.set(ex.date, []);
+        }
+        examsByDate.get(ex.date).push(ex);
+      });
+
+      for (const [eDate, exList] of examsByDate.entries()) {
+        let dayObj = days.find((d) => d.date === eDate);
+        if (!dayObj) {
+          const wDay = weekdayOf(eDate);
+          dayObj = {
+            date: eDate,
+            dayOfWeek: wDay,
+            isSunday: wDay === "Sunday",
+            isHoliday: false,
+            isInstructional: true,
+            instructional: true,
+            instructionalStatus: "Exam Day",
+            isExam: true,
+            category: "exam",
+            label: "",
+            eventDescription: "",
+            upcomingExams: []
+          };
+          days.push(dayObj);
+        }
+
+        dayObj.isExam = true;
+        dayObj.isHoliday = false;
+        dayObj.isInstructional = true;
+        dayObj.instructional = true;
+        dayObj.instructionalStatus = "Exam Day";
+        dayObj.upcomingExams = exList;
+
+        const examSummaries = exList.map((ex) => {
+          const type = ex.examType || "Exam";
+          const code = ex.courseCode || "";
+          const seat = resolveExamSeat(ex);
+          const venue = ex.venue || "TBA";
+          const time = ex.time ? ` · ⏰ ${ex.time}` : "";
+          const seatStr = seat !== "TBA" ? ` · 🪑 ${seat}` : "";
+          return `📝 [${type}] ${code} (📍 ${venue}${seatStr}${time})`;
+        });
+
+        const examText = examSummaries.join("\n");
+        const existingDesc = dayObj.eventDescription || "";
+        if (!existingDesc || existingDesc.toLowerCase().includes("instructional")) {
+          dayObj.eventDescription = examText;
+        } else if (!existingDesc.includes(exList[0].courseCode)) {
+          dayObj.eventDescription = `${existingDesc}\n${examText}`;
+        }
+      }
+
+      days.sort((a, b) => (a.date || "").localeCompare(b.date || ""));
+    }
+  } catch (_mergeErr) {
+    console.warn("Could not merge upcoming exams into academic calendar", _mergeErr);
+  }
   const activeSemName = calData.semesterName || "Current Semester";
   const semStartDate = calData.startDate || days[0]?.date || "";
   const semEndDate = calData.endDate || days[days.length - 1]?.date || "";
@@ -3403,13 +3948,14 @@ async function renderAcademicCalendarDashboard(activeFilter = currentCalendarFil
     const dayPes = (cachedPersonalEvents || []).filter((e) => e.date === d.date);
     if (activeFilter === "working" && (!d.isInstructional && !d.instructional)) return false;
     if (activeFilter === "holidays" && !d.isHoliday) return false;
-    if (activeFilter === "events" && !(d.isExam || d.isEvent || d.isFest)) return false;
+    if (activeFilter === "events" && !(d.isExam || d.isEvent || d.isFest || (d.upcomingExams && d.upcomingExams.length > 0))) return false;
     if (activeFilter === "dayorders" && !d.dayOrder) return false;
     if (activeFilter === "personal" && dayPes.length === 0) return false;
 
     if (query) {
       const peHaystack = dayPes.map((p) => `${p.title} ${p.description || ""} ${p.category || ""}`).join(" ");
-      const haystack = `${d.date || ""} ${d.dayOfWeek || ""} ${d.eventDescription || ""} ${d.label || ""} ${d.instructionalStatus || ""} ${d.dayOrder || ""} ${peHaystack}`.toLowerCase();
+      const examHaystack = (d.upcomingExams || []).map((x) => `${x.courseCode} ${x.courseTitle} ${x.venue} ${x.seat} ${x.seatNo} ${x.examType}`).join(" ");
+      const haystack = `${d.date || ""} ${d.dayOfWeek || ""} ${d.eventDescription || ""} ${d.label || ""} ${d.instructionalStatus || ""} ${d.dayOrder || ""} ${peHaystack} ${examHaystack}`.toLowerCase();
       if (!haystack.includes(query)) return false;
     }
 
@@ -3444,7 +3990,14 @@ async function renderAcademicCalendarDashboard(activeFilter = currentCalendarFil
     let mainTitle = "";
     let subText = "";
 
-    if (day.isExam) {
+    if (day.upcomingExams && day.upcomingExams.length > 0) {
+      const ex0 = day.upcomingExams[0];
+      const moreCount = day.upcomingExams.length > 1 ? ` (+${day.upcomingExams.length - 1} more)` : "";
+      badges.push(`<span class="cal-badge badge-exam">🎯 ${escapeHtml(ex0.examType || 'Exam')}: ${escapeHtml(ex0.courseCode)}${moreCount}</span>`);
+      mainTitle = `${ex0.courseCode} - ${ex0.courseTitle}`;
+      const seatVal = resolveExamSeat(ex0);
+      subText = `📍 Room: ${ex0.venue || "TBA"} · 🪑 Seat: ${seatVal} · ⏰ ${ex0.time || "TBA"}`;
+    } else if (day.isExam) {
       badges.push('<span class="cal-badge badge-exam">📝 Exam</span>');
       mainTitle = day.eventDescription || "Examination";
       subText = day.instructionalStatus || "";
@@ -3645,7 +4198,9 @@ document.addEventListener("DOMContentLoaded", async () => {
                     const date = (r.children[6] && r.children[6].innerText) || '';
                     const time = (r.children[9] && r.children[9].innerText) || '';
                     const venue = (r.children[10] && r.children[10].innerText) || '';
-                    const seat = (r.children[11] && r.children[11].innerText) || '';
+                    const seatLoc = (r.children[11] && r.children[11].innerText || '').trim();
+                    const seatNo = (r.children[12] && r.children[12].innerText || '').trim();
+                    const seat = (!seatLoc || seatLoc === '-' || seatLoc === '--') && seatNo && seatNo !== '-' ? seatNo : (seatLoc || seatNo || '-');
                     details.rows.push({ code, title, date, time, venue, seat });
                     j++;
                   }
@@ -3783,7 +4338,9 @@ document.addEventListener("DOMContentLoaded", async () => {
                 const date = (r.children[6] && r.children[6].innerText) || '';
                 const time = (r.children[9] && r.children[9].innerText) || '';
                 const venue = (r.children[10] && r.children[10].innerText) || '';
-                const seat = (r.children[11] && r.children[11].innerText) || '';
+                    const seatLoc = (r.children[11] && r.children[11].innerText || '').trim();
+                    const seatNo = (r.children[12] && r.children[12].innerText || '').trim();
+                    const seat = (!seatLoc || seatLoc === '-' || seatLoc === '--') && seatNo && seatNo !== '-' ? seatNo : (seatLoc || seatNo || '-');
                 details.rows.push({ code, title, date, time, venue, seat });
                 j++;
               }
@@ -3884,8 +4441,18 @@ document.addEventListener("DOMContentLoaded", async () => {
         renderAcademicCalendarDashboard();
       }
       if (changes[EXAM_SCHEDULE_STORAGE_KEY]) {
+        cachedExamData = null;
         renderExamScheduleDashboard();
+        renderAcademicCalendarDashboard();
       }
+    }
+  });
+
+  chrome.runtime.onMessage.addListener((request) => {
+    if (request?.type === "EXAM_SCHEDULE_UPDATED") {
+      cachedExamData = null;
+      renderExamScheduleDashboard();
+      renderAcademicCalendarDashboard();
     }
   });
 
@@ -4443,8 +5010,18 @@ document.addEventListener("DOMContentLoaded", async () => {
           return;
         }
 
-        const activeRecord = data;
-        const icsText = generateIcsCalendar(activeRecord);
+        const [personalEvents, examData, dayOverrides] = await Promise.all([
+          getPersonalEvents(),
+          getStoredExamSchedule(),
+          getDayOverrides()
+        ]);
+
+        const activeRecord = JSON.parse(JSON.stringify(data));
+        const icsText = generateIcsCalendar(activeRecord, {
+          personalEvents,
+          examList: examData?.exams || [],
+          dayOverrides
+        });
         if (!icsText) {
           if (quickActionStatus) quickActionStatus.textContent = "Could not generate calendar events.";
           return;
@@ -4460,7 +5037,7 @@ document.addEventListener("DOMContentLoaded", async () => {
         a.click();
         document.body.removeChild(a);
         URL.revokeObjectURL(url);
-        if (quickActionStatus) quickActionStatus.textContent = `📅 Exported phone calendar (.ics) for ${activeRecord.semesterName || "current semester"}!`;
+        if (quickActionStatus) quickActionStatus.textContent = `📅 Exported phone calendar (.ics) with exams and personal events!`;
       } catch (err) {
         if (quickActionStatus) quickActionStatus.textContent = `Export .ics failed: ${err.message || String(err)}`;
       }
@@ -4481,8 +5058,18 @@ document.addEventListener("DOMContentLoaded", async () => {
           return;
         }
 
-        const activeRecord = data;
-        const htmlText = generateMobileHtmlCalendar(activeRecord);
+        const [personalEvents, examData, dayOverrides] = await Promise.all([
+          getPersonalEvents(),
+          getStoredExamSchedule(),
+          getDayOverrides()
+        ]);
+
+        const activeRecord = JSON.parse(JSON.stringify(data));
+        const htmlText = generateMobileHtmlCalendar(activeRecord, {
+          personalEvents,
+          examList: examData?.exams || [],
+          dayOverrides
+        });
         if (!htmlText) {
           if (quickActionStatus) quickActionStatus.textContent = "Could not generate mobile HTML calendar.";
           return;
@@ -4498,7 +5085,7 @@ document.addEventListener("DOMContentLoaded", async () => {
         a.click();
         document.body.removeChild(a);
         URL.revokeObjectURL(url);
-        if (quickActionStatus) quickActionStatus.textContent = `📱 Exported mobile HTML calendar for ${activeRecord.semesterName || "current semester"}!`;
+        if (quickActionStatus) quickActionStatus.textContent = `📱 Exported mobile HTML calendar with exams and personal events!`;
       } catch (err) {
         if (quickActionStatus) quickActionStatus.textContent = `Export HTML failed: ${err.message || String(err)}`;
       }
@@ -4577,6 +5164,139 @@ document.addEventListener("DOMContentLoaded", async () => {
     });
   }
 
+  
+  // --- Day Override Modal Handlers ---
+  const dayOverrideModal = document.getElementById("dayOverrideModal");
+  const dayOverrideForm = document.getElementById("dayOverrideForm");
+  const closeDayOverrideModalBtn = document.getElementById("closeDayOverrideModalBtn");
+  const cancelDayOverrideBtn = document.getElementById("cancelDayOverrideBtn");
+  const resetDayOverrideBtn = document.getElementById("resetDayOverrideBtn");
+  const dayOverrideStatusSelect = document.getElementById("dayOverrideStatusSelect");
+  const dayOverrideDayOrderGroup = document.getElementById("dayOverrideDayOrderGroup");
+  const dayOverrideDayOrderSelect = document.getElementById("dayOverrideDayOrderSelect");
+  const dayOverrideReasonInput = document.getElementById("dayOverrideReasonInput");
+  const dayOverrideDateInput = document.getElementById("dayOverrideDateInput");
+  const dayOverrideDateDisplay = document.getElementById("dayOverrideDateDisplay");
+
+  const openDayOverrideModal = async (targetDate) => {
+    if (!dayOverrideModal || !targetDate) return;
+    const overrides = await getDayOverrides();
+    const existing = overrides[targetDate];
+
+    if (dayOverrideDateInput) dayOverrideDateInput.value = targetDate;
+    if (dayOverrideDateDisplay) {
+      const parts = targetDate.split("-").map(Number);
+      const dObj = new Date(parts[0], parts[1] - 1, parts[2]);
+      dayOverrideDateDisplay.textContent = `📅 ${dObj.toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric" })}`;
+    }
+
+    if (existing) {
+      if (dayOverrideStatusSelect) dayOverrideStatusSelect.value = existing.status || "working";
+      if (dayOverrideDayOrderSelect) dayOverrideDayOrderSelect.value = existing.dayOrder || "";
+      if (dayOverrideReasonInput) dayOverrideReasonInput.value = existing.reason || "";
+      if (resetDayOverrideBtn) resetDayOverrideBtn.style.display = "inline-block";
+    } else {
+      const activeRecord = getActiveCalendarRecord();
+      const currentDay = (activeRecord?.days || []).find(d => d.date === targetDate);
+      const defaultStatus = currentDay?.isHoliday ? "working" : "holiday";
+      if (dayOverrideStatusSelect) dayOverrideStatusSelect.value = defaultStatus;
+      if (dayOverrideDayOrderSelect) dayOverrideDayOrderSelect.value = currentDay?.dayOrder || "";
+      if (dayOverrideReasonInput) dayOverrideReasonInput.value = "";
+      if (resetDayOverrideBtn) resetDayOverrideBtn.style.display = "none";
+    }
+
+    if (dayOverrideDayOrderGroup) {
+      dayOverrideDayOrderGroup.style.display = dayOverrideStatusSelect?.value === "working" ? "block" : "none";
+    }
+
+    dayOverrideModal.style.display = "flex";
+  };
+
+  const closeDayOverrideModal = () => {
+    if (dayOverrideModal) dayOverrideModal.style.display = "none";
+  };
+
+  if (closeDayOverrideModalBtn) closeDayOverrideModalBtn.addEventListener("click", closeDayOverrideModal);
+  if (cancelDayOverrideBtn) cancelDayOverrideBtn.addEventListener("click", closeDayOverrideModal);
+
+  if (dayOverrideStatusSelect && dayOverrideDayOrderGroup) {
+    dayOverrideStatusSelect.addEventListener("change", () => {
+      dayOverrideDayOrderGroup.style.display = dayOverrideStatusSelect.value === "working" ? "block" : "none";
+    });
+  }
+
+  if (dayOverrideForm) {
+    dayOverrideForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const date = dayOverrideDateInput ? dayOverrideDateInput.value : "";
+      const status = dayOverrideStatusSelect ? dayOverrideStatusSelect.value : "working";
+      const dayOrder = dayOverrideDayOrderSelect ? dayOverrideDayOrderSelect.value : "";
+      const reason = dayOverrideReasonInput ? dayOverrideReasonInput.value.trim() : "";
+      if (!date) return;
+
+      await saveDayOverride(date, status, dayOrder, reason);
+      closeDayOverrideModal();
+      selectedDayDate = date;
+      await renderAcademicCalendarDashboard();
+
+      if (quickActionStatus) {
+        quickActionStatus.textContent = `⚡ Overrode ${date} as ${status === 'working' ? 'Working Class Day' : 'Holiday'}!`;
+      }
+    });
+  }
+
+  if (resetDayOverrideBtn) {
+    resetDayOverrideBtn.addEventListener("click", async () => {
+      const date = dayOverrideDateInput ? dayOverrideDateInput.value : "";
+      if (!date) return;
+      await deleteDayOverride(date);
+      closeDayOverrideModal();
+      selectedDayDate = date;
+      await renderAcademicCalendarDashboard();
+      if (quickActionStatus) {
+        quickActionStatus.textContent = `↺ Reset ${date} back to VTOP default status.`;
+      }
+    });
+  }
+
+  // Handle click on [data-action="override-day"] and [data-action="reset-override"]
+  document.addEventListener("click", async (e) => {
+    const overrideBtn = e.target.closest('[data-action="override-day"]');
+    if (overrideBtn) {
+      const targetDate = overrideBtn.dataset.date || selectedDayDate;
+      if (targetDate) openDayOverrideModal(targetDate);
+      return;
+    }
+    const resetBtn = e.target.closest('[data-action="reset-override"]');
+    if (resetBtn) {
+      const targetDate = resetBtn.dataset.date || selectedDayDate;
+      if (targetDate) {
+        await deleteDayOverride(targetDate);
+        selectedDayDate = targetDate;
+        await renderAcademicCalendarDashboard();
+        if (quickActionStatus) {
+          quickActionStatus.textContent = `↺ Reset ${targetDate} back to VTOP default status.`;
+        }
+      }
+      return;
+    }
+  });
+
+  // Handle preset color button clicks in personal event form
+  const colorPresets = document.getElementById("eventColorPresets");
+  const colorInput = document.getElementById("eventColorInput");
+  if (colorPresets && colorInput) {
+    colorPresets.addEventListener("click", (e) => {
+      const btn = e.target.closest(".color-preset-btn");
+      if (!btn) return;
+      const col = btn.dataset.color;
+      if (col) {
+        colorInput.value = col;
+        colorPresets.querySelectorAll(".color-preset-btn").forEach(b => b.classList.toggle("active", b === btn));
+      }
+    });
+  }
+
   const personalEventForm = document.getElementById("personalEventForm");
   if (personalEventForm) {
     personalEventForm.addEventListener("submit", async (e) => {
@@ -4604,13 +5324,15 @@ document.addEventListener("DOMContentLoaded", async () => {
         return;
       }
 
+      const colorInput = document.getElementById("eventColorInput");
       const eventPayload = {
         id: idInput && idInput.value ? idInput.value : undefined,
         title,
         date,
         category: catSelect ? catSelect.value : "personal",
         time: timeInput ? timeInput.value.trim() : "",
-        description: descInput ? descInput.value.trim() : ""
+        description: descInput ? descInput.value.trim() : "",
+        color: (catSelect && catSelect.value === "exam" && colorInput) ? colorInput.value : undefined
       };
 
       await savePersonalEvent(eventPayload);
@@ -4637,6 +5359,67 @@ document.addEventListener("DOMContentLoaded", async () => {
   const examTabsContainer = document.getElementById("examTabsContainer");
   const examSearchInput = document.getElementById("examSearchInput");
 
+  // --- Exam Schedule Sync Button Listener ---
+  if (syncExamsBtn) {
+    syncExamsBtn.addEventListener("click", async () => {
+      if (syncExamsIcon) syncExamsIcon.classList.add("spin");
+      if (syncExamsBtnText) syncExamsBtnText.textContent = "Syncing...";
+
+      try {
+        const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
+        let targetTab = null;
+        if (activeTab?.id && activeTab.url && activeTab.url.includes("vtopcc.vit.ac.in")) {
+          targetTab = activeTab;
+        } else {
+          const vtopTabs = await chrome.tabs.query({ url: "*://vtopcc.vit.ac.in/*" });
+          if (vtopTabs.length > 0 && vtopTabs[0]?.id) {
+            targetTab = vtopTabs[0];
+          }
+        }
+
+        if (!targetTab?.id) {
+          if (quickActionStatus) {
+            quickActionStatus.textContent = "Opening VTOP tab. Please log in to sync exam schedule.";
+          }
+          chrome.tabs.create({ url: "https://vtopcc.vit.ac.in/vtop/open/page" });
+          return;
+        }
+
+        const res = await sendMessageWithInjectionFallback(targetTab.id, {
+          message: "fetch_exam_schedule",
+          force: true
+        });
+
+        cachedExamData = null;
+        await renderExamScheduleDashboard();
+        await renderAcademicCalendarDashboard();
+
+        const latestData = await getStoredExamSchedule(true);
+        const count = res?.exams?.length || latestData?.exams?.length || 0;
+
+        if (res?.ok || count > 0) {
+          if (quickActionStatus) {
+            quickActionStatus.textContent = `📝 Synced exam schedule! Found ${count} exam(s).`;
+          }
+        } else {
+          if (quickActionStatus) {
+            quickActionStatus.textContent = `Exam sync notice: ${res?.reason || res?.error || "Make sure you are logged in to VTOP."}`;
+          }
+        }
+      } catch (err) {
+        cachedExamData = null;
+        await renderExamScheduleDashboard();
+        if (quickActionStatus) {
+          quickActionStatus.textContent = `Exam sync notice: ${err?.message || String(err)}`;
+        }
+      } finally {
+        if (syncExamsIcon) syncExamsIcon.classList.remove("spin");
+        if (syncExamsBtnText) syncExamsBtnText.textContent = "Sync";
+      }
+    });
+  }
+
+
   if (toggleExamBtn && storedExamsPanel) {
     toggleExamBtn.addEventListener("click", () => {
       const isHidden = storedExamsPanel.style.display === "none";
@@ -4647,61 +5430,156 @@ document.addEventListener("DOMContentLoaded", async () => {
     });
   }
 
-  if (syncExamsBtn) {
-    syncExamsBtn.addEventListener("click", async () => {
+  // --- Exam Tabs Filter Listener ("all", "upcoming", "cat-1", "cat-2", "fat") ---
+  if (examTabsContainer) {
+    examTabsContainer.addEventListener("click", (e) => {
+      const btn = e.target.closest(".exam-tab-btn");
+      if (!btn) return;
+      const filter = btn.dataset.examFilter || "all";
+      currentExamFilter = filter;
+      examTabsContainer.querySelectorAll(".exam-tab-btn").forEach((b) => {
+        b.classList.toggle("active", b === btn);
+      });
+      // Expand stored exams panel if hidden so user sees filtered exams
+      if (storedExamsPanel && storedExamsPanel.style.display === "none") {
+        storedExamsPanel.style.display = "block";
+        if (storedExamsArrow) storedExamsArrow.textContent = "▲";
+      }
+      renderExamScheduleDashboard(currentExamFilter, currentExamSearch);
+    });
+  }
+
+  // --- Exam Live Search Input Listener ---
+  if (examSearchInput) {
+    examSearchInput.addEventListener("input", () => {
+      currentExamSearch = examSearchInput.value || "";
+      // Expand stored exams panel if hidden so user sees search results
+      if (storedExamsPanel && storedExamsPanel.style.display === "none") {
+        storedExamsPanel.style.display = "block";
+        if (storedExamsArrow) storedExamsArrow.textContent = "▲";
+      }
+      renderExamScheduleDashboard(currentExamFilter, currentExamSearch);
+    });
+  }
+
+  // --- Export .ics Calendar File Listener ---
+  if (exportExamIcsBtn) {
+    exportExamIcsBtn.addEventListener("click", async () => {
       try {
-        if (syncExamsIcon) syncExamsIcon.classList.add("spin");
-        if (syncExamsBtnText) syncExamsBtnText.textContent = "Syncing...";
-        if (statusEl) statusEl.textContent = "Connecting to VTOP to extract Exam Schedule...";
-
-        // 1. Try sending background fetch message to active tab
-        const [vtab] = await chrome.tabs.query({ active: true, currentWindow: true });
-        let response = null;
-        if (vtab?.id) {
-          response = await chrome.tabs.sendMessage(vtab.id, { message: "fetch_exam_schedule" }).catch(() => null);
+        const examData = await getStoredExamSchedule();
+        const exams = examData?.exams || [];
+        if (exams.length === 0) {
+          if (statusEl) statusEl.textContent = "No stored exams found. Sync from VTOP first.";
+          return;
         }
-
-        // 2. If active tab is not on VTOP, find any open VTOP tab across windows
-        if (!response?.ok) {
-          const vtopTabs = await chrome.tabs.query({ url: "*://vtopcc.vit.ac.in/*" });
-          if (vtopTabs.length > 0) {
-            response = await chrome.tabs.sendMessage(vtopTabs[0].id, { message: "fetch_exam_schedule" }).catch(() => null);
-          }
+        const icsContent = generateExamScheduleIcs(examData);
+        if (!icsContent) {
+          if (statusEl) statusEl.textContent = "Could not generate calendar events.";
+          return;
         }
-
-        if (response?.ok && Array.isArray(response.exams) && response.exams.length > 0) {
-          const payload = {
-            lastSynced: Date.now(),
-            semesterName: response.semesterName || response.semName || "Exam Schedule",
-            exams: response.exams
-          };
-          await chrome.storage.local.set({ [EXAM_SCHEDULE_STORAGE_KEY]: payload });
-          if (window.VITCM_DB?.saveExamSchedule) {
-            await window.VITCM_DB.saveExamSchedule(payload);
-          }
-          cachedExamData = payload;
-          await renderExamScheduleDashboard();
-          if (statusEl) statusEl.textContent = `🎉 Synced ${response.exams.length} exam(s) with venues and seat locations!`;
-        } else {
-          // If no VTOP tab has active session
-          if (statusEl) statusEl.textContent = "Please log into VTOP in any tab to auto-sync exams.";
-        }
+        const blob = new Blob([icsContent], { type: "text/calendar;charset=utf-8" });
+        const url = URL.createObjectURL(blob);
+        const semClean = (examData.semesterName || "VIT_Exams").replace(/[^a-zA-Z0-9_-]/g, "_");
+        const filename = `${semClean}_Schedule.ics`;
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+        if (statusEl) statusEl.textContent = `📅 Exported ${exams.length} exams to ${filename}!`;
       } catch (err) {
-        if (statusEl) statusEl.textContent = "Sync failed: " + (err?.message || err);
-      } finally {
-        if (syncExamsIcon) syncExamsIcon.classList.remove("spin");
-        if (syncExamsBtnText) syncExamsBtnText.textContent = "Sync";
+        if (statusEl) statusEl.textContent = "Export failed: " + (err?.message || err);
       }
     });
   }
 
-  // Live listener for background exam schedule sync notifications
-  chrome.runtime.onMessage.addListener((msg) => {
-    if (msg?.type === "EXAM_SCHEDULE_UPDATED" && msg.data) {
-      cachedExamData = msg.data;
-      renderExamScheduleDashboard().catch(() => {});
-    }
-  });
+  // --- Copy Exam Schedule (WhatsApp Text / Markdown) Listener ---
+  if (copyExamScheduleBtn) {
+    copyExamScheduleBtn.addEventListener("click", async () => {
+      try {
+        const examData = await getStoredExamSchedule();
+        let exams = examData?.exams || [];
+        if (exams.length === 0) {
+          if (statusEl) statusEl.textContent = "No stored exams to copy. Sync from VTOP first.";
+          return;
+        }
+
+        // Apply active filter/search
+        if (currentExamFilter === "upcoming") {
+          const todayStr = new Date().toISOString().slice(0, 10);
+          exams = exams.filter((e) => (e.date && e.date >= todayStr) || (e.timestamp && e.timestamp > Date.now() - 3 * 3600 * 1000));
+        } else if (currentExamFilter === "cat1") {
+          exams = exams.filter((e) => {
+            const t = (e.examType || "").toLowerCase();
+            const raw = (e.rawExamType || "").toLowerCase();
+            const isCat2 = t.includes("cat-2") || t.includes("cat 2") || t.includes("cat2") || t.includes("cat-ii") || t.includes("cat ii") || t.includes("assessment test - ii") || t.includes("assessment test ii") || raw.includes("cat-2") || raw.includes("cat 2") || raw.includes("cat2") || raw.includes("cat-ii") || raw.includes("cat ii") || raw.includes("assessment test - ii") || raw.includes("assessment test ii");
+            if (isCat2) return false;
+            return t === "cat-1" || t === "cat1" || t.includes("cat 1") || t.includes("cat-i") || t.includes("cat i") || t.includes("assessment test - i") || t.includes("assessment test i") || raw.includes("cat 1") || raw.includes("cat-1") || raw.includes("cat-i") || raw.includes("cat i") || raw.includes("assessment test - i") || raw.includes("assessment test i");
+          });
+        } else if (currentExamFilter === "cat2") {
+          exams = exams.filter((e) => {
+            const t = (e.examType || "").toLowerCase();
+            const raw = (e.rawExamType || "").toLowerCase();
+            return t === "cat-2" || t === "cat2" || t.includes("cat 2") || t.includes("cat-ii") || t.includes("cat ii") || t.includes("assessment test - ii") || t.includes("assessment test ii") || raw.includes("cat 2") || raw.includes("cat-2") || raw.includes("cat2") || raw.includes("cat-ii") || raw.includes("cat ii") || raw.includes("assessment test - ii") || raw.includes("assessment test ii");
+          });
+        } else if (currentExamFilter === "fat") {
+          exams = exams.filter((e) => /fat|terminal|final/i.test(e.examType || "") || /fat|terminal|final/i.test(e.rawExamType || ""));
+        }
+
+        if (currentExamSearch && currentExamSearch.trim()) {
+          const q = currentExamSearch.toLowerCase().trim();
+          exams = exams.filter((e) => {
+            const hay = `${e.courseCode || ""} ${e.courseTitle || ""} ${e.venue || ""} ${e.seat || ""} ${e.date || ""} ${e.rawDate || ""} ${e.time || ""} ${e.slot || ""} ${e.examType || ""}`.toLowerCase();
+            return hay.includes(q);
+          });
+        }
+
+        const format = examCopyFormatSelect?.value || "WHATSAPP";
+        let text = "";
+        const semTitle = examData.semesterName || "Exam Schedule";
+
+        if (format === "WHATSAPP") {
+          const lines = [`*📋 VIT EXAM SCHEDULE & SEAT FINDER*`, `_${semTitle}_`];
+          exams.forEach((ex, idx) => {
+            lines.push("");
+            lines.push(`*${idx + 1}. [${ex.examType || "EXAM"}] ${ex.courseCode}* - ${ex.courseTitle}`);
+            lines.push(`📅 *Date:* ${ex.rawDate || ex.date} | ⏰ *Time:* ${ex.time || "TBA"}`);
+            lines.push(`📍 *Room:* ${ex.venue || "TBA"} | 🪑 *Seat:* ${resolveExamSeat(ex)}`);
+            if (ex.slot) lines.push(`🏷️ *Slot:* ${ex.slot}`);
+          });
+          text = lines.join("\n").trim();
+        } else {
+          const lines = [`### 📋 VIT Exam Schedule - ${semTitle}\n`];
+          lines.push("| Course Code | Course Title | Exam | Date | Time | Venue / Room | Seat |");
+          lines.push("|---|---|---|---|---|---|---|");
+          exams.forEach((ex) => {
+            const cols = [
+              ex.courseCode || "-",
+              ex.courseTitle || "-",
+              ex.examType || "-",
+              ex.rawDate || ex.date || "-",
+              ex.time || "-",
+              ex.venue || "TBA",
+              ex.seat || "TBA"
+            ].map((c) => String(c).replace(/\|/g, "\\|"));
+            lines.push(`| ${cols.join(" | ")} |`);
+          });
+          text = lines.join("\n");
+        }
+
+        await navigator.clipboard.writeText(text);
+        copyExamScheduleBtn.textContent = "✓ Copied!";
+        setTimeout(() => {
+          copyExamScheduleBtn.textContent = "📋 Copy Schedule";
+        }, 2000);
+        if (statusEl) statusEl.textContent = `📋 Copied ${exams.length} exam(s) in ${format} format!`;
+      } catch (err) {
+        if (statusEl) statusEl.textContent = "Copy failed: " + (err?.message || err);
+      }
+    });
+  }
 
   const calendarSelectedDayDetail = document.getElementById("calendarSelectedDayDetail");
   if (calendarSelectedDayDetail) {

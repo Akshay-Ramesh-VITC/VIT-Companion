@@ -57,12 +57,46 @@ function parseExamTimeToMinutes(timeStr) {
 
 function extractAllExamSchedule(root = document) {
   try {
-    const tb = root.getElementsByTagName ? root.getElementsByTagName('tbody')[0] : root.querySelector('tbody');
-    if (!tb || !tb.rows || tb.rows.length === 0) return [];
+    let allRows = [];
+    if (root.querySelectorAll) {
+      const tbodies = root.querySelectorAll('tbody');
+      if (tbodies && tbodies.length > 0) {
+        tbodies.forEach((tb) => {
+          if (tb.rows) allRows.push(...Array.from(tb.rows));
+        });
+      }
+    }
+    if (allRows.length === 0) {
+      const tb = root.getElementsByTagName ? root.getElementsByTagName('tbody')[0] : root.querySelector('tbody');
+      if (tb && tb.rows) allRows = Array.from(tb.rows);
+    }
+    if (allRows.length === 0) return [];
 
-    const rows = Array.from(tb.rows);
+    const rows = allRows;
     const exams = [];
     let currentSectionHeader = "Exam";
+
+    // Column index mapping (default matches: S.No., Code, Title, Type, ClassID, Slot, Date, Session, ReportingTime, ExamTime, Venue, SeatLocation, SeatNo)
+    let colMap = {
+      code: 1,
+      title: 2,
+      courseType: 3,
+      classId: 4,
+      slot: 5,
+      date: 6,
+      session: 7,
+      reportingTime: 8,
+      time: 9,
+      venue: 10,
+      seatLocation: 11,
+      seatNo: 12
+    };
+
+    const isBlankOrDash = (val) => {
+      if (!val) return true;
+      const s = String(val).trim().toLowerCase();
+      return s === "" || s === "-" || s === "--" || s === "nil" || s === "tba" || s === "null" || s === "na" || s === "n/a";
+    };
 
     for (let i = 0; i < rows.length; i++) {
       const r = rows[i];
@@ -74,13 +108,34 @@ function extractAllExamSchedule(root = document) {
         continue;
       }
 
-      // Skip table header rows
-      if (r.querySelector && r.querySelector('th')) continue;
-      if (r.classList && (r.classList.contains('tableHeader') || r.classList.contains('header'))) continue;
+      // Check for table header row and dynamically update column map
+      const hasTh = Boolean(r.querySelector && r.querySelector('th'));
+      const isHeaderRow = hasTh || (r.classList && (r.classList.contains('tableHeader') || r.classList.contains('header'))) ||
+                          Boolean(r.innerText && r.innerText.toLowerCase().includes('course code'));
 
-      const code = (r.children[1] && (r.children[1].innerText || r.children[1].textContent) || "").trim();
-      const title = (r.children[2] && (r.children[2].innerText || r.children[2].textContent) || "").trim();
-      const rawDate = (r.children[6] && (r.children[6].innerText || r.children[6].textContent) || "").trim();
+      if (isHeaderRow) {
+        const cells = Array.from(r.children);
+        cells.forEach((cell, idx) => {
+          const txt = (cell.innerText || cell.textContent || "").toLowerCase().trim();
+          if (txt.includes("course code") || txt === "code") colMap.code = idx;
+          else if (txt.includes("course title") || txt === "title") colMap.title = idx;
+          else if (txt.includes("course type") || txt === "type") colMap.courseType = idx;
+          else if (txt.includes("class id") || txt.includes("class nbr") || txt.includes("class number")) colMap.classId = idx;
+          else if (txt.includes("slot")) colMap.slot = idx;
+          else if (txt.includes("exam date") || txt === "date") colMap.date = idx;
+          else if (txt.includes("exam session") || txt === "session") colMap.session = idx;
+          else if (txt.includes("reporting time") || txt === "reporting") colMap.reportingTime = idx;
+          else if (txt.includes("exam time") || txt === "time") colMap.time = idx;
+          else if (txt.includes("venue") || txt.includes("room") || txt.includes("hall")) colMap.venue = idx;
+          else if (txt.includes("seat location") || txt.includes("location")) colMap.seatLocation = idx;
+          else if (txt.includes("seat no") || txt.includes("seat number") || txt === "seat") colMap.seatNo = idx;
+        });
+        continue;
+      }
+
+      const code = (r.children[colMap.code] && (r.children[colMap.code].innerText || r.children[colMap.code].textContent) || "").trim();
+      const title = (r.children[colMap.title] && (r.children[colMap.title].innerText || r.children[colMap.title].textContent) || "").trim();
+      const rawDate = (r.children[colMap.date] && (r.children[colMap.date].innerText || r.children[colMap.date].textContent) || "").trim();
 
       if (!code || !title || code.length < 3) continue;
 
@@ -95,22 +150,20 @@ function extractAllExamSchedule(root = document) {
       if (!/^[A-Z]{2,5}\s*\d{3,4}[A-Z]?$/i.test(code.replace(/\s+/g, ''))) continue;
       if (!/\d{1,2}/.test(rawDate)) continue;
 
-      const rawTime = (r.children[9] && (r.children[9].innerText || r.children[9].textContent) || "").trim();
-      let rawVenue = (r.children[10] && (r.children[10].innerText || r.children[10].textContent) || "").trim();
-      let rawSeat = (r.children[11] && (r.children[11].innerText || r.children[11].textContent) || "").trim();
-      const slot = (r.children[3] && (r.children[3].innerText || r.children[3].textContent) || "").trim();
+      const rawTime = (r.children[colMap.time] && (r.children[colMap.time].innerText || r.children[colMap.time].textContent) || "").trim();
+      let rawVenue = (r.children[colMap.venue] && (r.children[colMap.venue].innerText || r.children[colMap.venue].textContent) || "").trim();
+      let rawSeatLocation = (r.children[colMap.seatLocation] && (r.children[colMap.seatLocation].innerText || r.children[colMap.seatLocation].textContent) || "").trim();
+      let rawSeatNo = (r.children[colMap.seatNo] && (r.children[colMap.seatNo].innerText || r.children[colMap.seatNo].textContent) || "").trim();
+      const slot = (r.children[colMap.slot] && (r.children[colMap.slot].innerText || r.children[colMap.slot].textContent) || "").trim();
+      const courseType = (r.children[colMap.courseType] && (r.children[colMap.courseType].innerText || r.children[colMap.courseType].textContent) || "").trim();
+      const classId = (r.children[colMap.classId] && (r.children[colMap.classId].innerText || r.children[colMap.classId].textContent) || "").trim();
+      const reportingTime = (r.children[colMap.reportingTime] && (r.children[colMap.reportingTime].innerText || r.children[colMap.reportingTime].textContent) || "").trim();
+      const examSession = (r.children[colMap.session] && (r.children[colMap.session].innerText || r.children[colMap.session].textContent) || "").trim();
 
-      if (!rawVenue || rawVenue === "-" || rawVenue === "--") rawVenue = "TBA";
-      if (!rawSeat || rawSeat === "-" || rawSeat === "--") rawSeat = "TBA";
+      if (isBlankOrDash(rawVenue)) rawVenue = "TBA";
 
-      const isoDate = parseVtopExamDateToIso(rawDate);
-      const { startMinutes, endMinutes } = parseExamTimeToMinutes(rawTime);
-
-      let epoch = 0;
-      if (isoDate && isoDate.includes("-")) {
-        const dp = isoDate.split("-").map(Number);
-        epoch = new Date(dp[0], dp[1] - 1, dp[2], Math.floor(startMinutes / 60), startMinutes % 60).getTime();
-      }
+      const hasSeatLoc = !isBlankOrDash(rawSeatLocation);
+      const hasSeatNo = !isBlankOrDash(rawSeatNo);
 
       let examType = "Exam";
       const hdrUpper = currentSectionHeader.toUpperCase();
@@ -124,18 +177,48 @@ function extractAllExamSchedule(root = document) {
         examType = currentSectionHeader.split("(")[0].trim() || "Exam";
       }
 
+      // FAT alone or general: if seat location is not provided or is '-', show seat no.
+      let rawSeat = "TBA";
+      const isFat = examType === "FAT" || examType === "Lab FAT" ||
+                    hdrUpper.includes("FAT") || hdrUpper.includes("FINAL") || hdrUpper.includes("TERMINAL");
+
+      if (hasSeatLoc) {
+        rawSeat = rawSeatLocation;
+      } else if (hasSeatNo) {
+        rawSeat = rawSeatNo;
+      }
+
+      if (isFat && !hasSeatLoc && hasSeatNo) {
+        rawSeat = rawSeatNo;
+      }
+
+      const isoDate = parseVtopExamDateToIso(rawDate);
+      const { startMinutes, endMinutes } = parseExamTimeToMinutes(rawTime);
+
+      let epoch = 0;
+      if (isoDate && isoDate.includes("-")) {
+        const dp = isoDate.split("-").map(Number);
+        epoch = new Date(dp[0], dp[1] - 1, dp[2], Math.floor(startMinutes / 60), startMinutes % 60).getTime();
+      }
+
       const id = `${code}_${examType}_${isoDate || rawDate}`.replace(/\s+/g, "_");
 
       exams.push({
         id,
         courseCode: code,
         courseTitle: title,
+        courseType,
+        classId,
         examType,
         rawExamType: currentSectionHeader,
         date: isoDate,
         rawDate,
         time: rawTime,
+        reportingTime,
+        examSession,
         venue: rawVenue,
+        seatLocation: hasSeatLoc ? rawSeatLocation : (hasSeatNo ? rawSeatNo : "TBA"),
+        seatNo: rawSeatNo,
         seat: rawSeat,
         slot,
         startMinutes,
@@ -211,8 +294,12 @@ async function autoFetchExamScheduleInBackground(force = false) {
   }
 
   // 1. If currently on the exam schedule page with table rendered, scrape directly!
-  const liveTb = document.getElementsByTagName('tbody')[0];
-  if (liveTb && liveTb.querySelector && liveTb.querySelector('.panelHead-secondary')) {
+  const hasLiveExamDom = Boolean(
+    document.querySelector('.panelHead-secondary') ||
+    document.querySelector('td.panelHead-secondary') ||
+    (document.querySelector('table') && document.body?.innerText?.includes('Venue') && (document.body?.innerText?.includes('CAT') || document.body?.innerText?.includes('FAT') || document.body?.innerText?.includes('Exam Date')))
+  );
+  if (hasLiveExamDom) {
     const liveExams = extractAllExamSchedule(document);
     if (liveExams.length > 0) {
       await saveExtractedExamSchedule(liveExams);
@@ -260,12 +347,80 @@ async function autoFetchExamScheduleInBackground(force = false) {
     );
 
     if (!semSubId) {
-      const storedMarks = await chrome.storage.local.get("vit_stored_marks");
-      semSubId = storedMarks?.vit_stored_marks?.selectedSemesterId ||
-                 storedMarks?.vit_stored_marks?.currentSemesterId ||
-                 "";
-      semName = storedMarks?.vit_stored_marks?.currentSemesterName || "";
+      try {
+        const storedExams = await chrome.storage.local.get(EXAM_SCHEDULE_STORAGE_KEY);
+        semSubId = storedExams?.[EXAM_SCHEDULE_STORAGE_KEY]?.semesterId || "";
+        semName = storedExams?.[EXAM_SCHEDULE_STORAGE_KEY]?.semesterName || "";
+      } catch (_e) {}
     }
+    if (!semSubId) {
+      try {
+        const storedMarks = await chrome.storage.local.get("vit_stored_marks");
+        semSubId = storedMarks?.vit_stored_marks?.selectedSemesterId ||
+                   storedMarks?.vit_stored_marks?.currentSemesterId ||
+                   "";
+        semName = storedMarks?.vit_stored_marks?.currentSemesterName || "";
+      } catch (_e) {}
+    }
+    if (!semSubId && window.VITCM_DB?.loadExamSchedule) {
+      try {
+        const dbEx = await window.VITCM_DB.loadExamSchedule();
+        semSubId = dbEx?.semesterId || "";
+        semName = dbEx?.semesterName || "";
+      } catch (_e) {}
+    }
+    if (!semSubId && window.VITCM_DB?.loadMarksData) {
+      try {
+        const dbMarks = await window.VITCM_DB.loadMarksData();
+        semSubId = dbMarks?.selectedSemesterId || dbMarks?.currentSemesterId || "";
+        semName = dbMarks?.currentSemesterName || "";
+      } catch (_e) {}
+    }
+
+    // Step A: Initialize exam view session and extract CSRF / semester if needed
+    try {
+      const viewUrls = [
+        `${origin}/vtop/examinations/examScheduleView/StudentExamSchedule`,
+        `${origin}/vtop/examinations/examScheduleView`
+      ];
+      for (const vUrl of viewUrls) {
+        const vParams = new URLSearchParams();
+        if (csrfToken) vParams.append("_csrf", csrfToken);
+        if (authId) vParams.append("authorizedID", authId);
+
+        const vRes = await fetch(vUrl, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+            "X-Requested-With": "XMLHttpRequest"
+          },
+          body: vParams.toString(),
+          credentials: "include"
+        });
+
+        if (vRes.ok) {
+          const vText = await vRes.text();
+          const parser = new DOMParser();
+          const viewDoc = parser.parseFromString(vText, "text/html");
+          const docCsrf = viewDoc.querySelector('input[name="_csrf"]')?.value || viewDoc.querySelector('input[id="_csrf"]')?.value;
+          if (docCsrf) csrfToken = docCsrf;
+          const docAuth = viewDoc.querySelector('input[name="authorizedID"]')?.value || viewDoc.getElementById("authorizedID")?.value;
+          if (docAuth) authId = docAuth;
+
+          if (!semSubId) {
+            const semOpt = viewDoc.querySelector("#semesterSubId option[selected]") ||
+                           viewDoc.querySelector("#semesterSubId option:not([value=''])") ||
+                           viewDoc.querySelector("select[name='semesterSubId'] option[selected]") ||
+                           viewDoc.querySelector("select option:not([value=''])");
+            if (semOpt) {
+              semSubId = semOpt.value || "";
+              semName = semOpt.innerText?.trim() || "";
+            }
+          }
+          break;
+        }
+      }
+    } catch (_initErr) {}
 
     // VTOP Exam Schedule Endpoints (from VtopMCP)
     const candidateUrls = [
@@ -345,8 +500,9 @@ if (window.location.hostname.includes("vtopcc.vit.ac.in")) {
   // Observe SPA view changes
   try {
     const observer = new MutationObserver(() => {
-      const tb = document.getElementsByTagName('tbody')[0];
-      if (tb && tb.querySelector && tb.querySelector('.panelHead-secondary')) {
+      const hasLive = document.querySelector('.panelHead-secondary') ||
+                      document.querySelector('td.panelHead-secondary');
+      if (hasLive) {
         const exams = extractAllExamSchedule(document);
         if (exams.length > 0) {
           saveExtractedExamSchedule(exams).catch(() => {});
@@ -363,9 +519,11 @@ let is_venue = (i) => {
   let row = document.getElementsByTagName("tbody")[0].rows;
   let empty_venue_count = 0;
   while (row[i] && row[i].children[0].className !== "panelHead-secondary") {
-    if (row[i].children[11] && row[i].children[11].innerText == "-") {
-      empty_venue_count++;
-    }
+    const sLoc = (row[i].children[11] && row[i].children[11].innerText || "").trim();
+      const sNo = (row[i].children[12] && row[i].children[12].innerText || "").trim();
+      if ((!sLoc || sLoc === "-") && (!sNo || sNo === "-")) {
+        empty_venue_count++;
+      }
     i++;
     if (i == row.length) break;
   }

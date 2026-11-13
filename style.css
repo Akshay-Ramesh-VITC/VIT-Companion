@@ -3119,3 +3119,220 @@ html.opera-popup .portal-launcher {
   color: var(--muted);
   opacity: 0.6;
 }
+
+
+/* Upcoming Exam Cards in Academic Calendar Detail & Grid */
+.cal-upcoming-exams-wrap {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.cal-upcoming-header {
+  font-size: 10px;
+  font-weight: 700;
+  color: #c084fc;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.cal-upcoming-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.cal-exam-card {
+  background: rgba(168, 85, 247, 0.12);
+  border: 1px solid rgba(168, 85, 247, 0.35);
+  border-radius: 6px;
+  padding: 6px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.cal-exam-top {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.cal-exam-type-badge {
+  background: rgba(168, 85, 247, 0.35);
+  color: #e9d5ff;
+  font-size: 9px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+
+.cal-exam-code {
+  font-weight: 700;
+  font-size: 11px;
+  color: #f8fafc;
+}
+
+.cal-exam-slot {
+  font-size: 10px;
+  color: #94a3b8;
+  margin-left: auto;
+}
+
+.cal-exam-title {
+  font-size: 10.5px;
+  color: #e2e8f0;
+}
+
+.cal-exam-meta-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 10px;
+  color: #cbd5e1;
+  margin-top: 2px;
+}
+
+.cal-exam-meta-row strong {
+  color: #38bdf8;
+}
+
+.cal-table-cell.cell-upcoming-exam {
+  box-shadow: inset 0 0 0 1.5px rgba(168, 85, 247, 0.7);
+  background: rgba(168, 85, 247, 0.18) !important;
+}
+
+
+/* Color Picker in Personal Event Modal */
+.cal-color-picker-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.cal-color-input {
+  -webkit-appearance: none;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  width: 32px;
+  height: 32px;
+  border-radius: 6px;
+  cursor: pointer;
+  background: transparent;
+  padding: 0;
+}
+
+.cal-color-input::-webkit-color-swatch-wrapper {
+  padding: 0;
+}
+
+.cal-color-input::-webkit-color-swatch {
+  border: none;
+  border-radius: 5px;
+}
+
+.cal-color-presets {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.color-preset-btn {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  cursor: pointer;
+  transition: transform 0.15s ease, border-color 0.15s ease;
+}
+
+.color-preset-btn:hover {
+  transform: scale(1.15);
+}
+
+.color-preset-btn.active {
+  border-color: #fff;
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.4);
+}
+
+/* Day Override Styles */
+.override-date-label {
+  font-size: 11px;
+  font-weight: 700;
+  color: #f8fafc;
+  background: rgba(255, 255, 255, 0.05);
+  padding: 6px 10px;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.cal-btn-danger {
+  background: rgba(239, 68, 68, 0.2);
+  border: 1px solid rgba(239, 68, 68, 0.5);
+  color: #fca5a5;
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  margin-right: auto;
+}
+
+.cal-btn-danger:hover {
+  background: rgba(239, 68, 68, 0.35);
+  color: #fff;
+}
+
+.btn-override-day {
+  background: rgba(59, 130, 246, 0.15);
+  border: 1px solid rgba(59, 130, 246, 0.4);
+  color: #93c5fd;
+  padding: 4px 8px;
+  border-radius: 6px;
+  font-size: 10px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.btn-override-day:hover {
+  background: rgba(59, 130, 246, 0.28);
+  color: #fff;
+}
+
+.cal-override-notice {
+  font-size: 10.5px;
+  color: #38bdf8;
+  background: rgba(56, 189, 248, 0.1);
+  border: 1px solid rgba(56, 189, 248, 0.3);
+  border-radius: 6px;
+  padding: 6px 8px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 6px;
+}
+
+.btn-reset-override {
+  background: rgba(239, 68, 68, 0.2);
+  border: 1px solid rgba(239, 68, 68, 0.4);
+  color: #fca5a5;
+  padding: 2px 7px;
+  border-radius: 4px;
+  font-size: 9.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.btn-reset-override:hover {
+  background: rgba(239, 68, 68, 0.35);
+}
+
+.cal-table-cell.cell-override {
+  box-shadow: inset 0 0 0 1px #38bdf8 !important;
+}
